@@ -269,6 +269,7 @@ import os
 import sys
 import pickle
 import logging
+import csv
 
 from beancount.core.data import Transaction, Posting, Balance, Commodity, Price, EMPTY_SET, Directive
 from beancount.core.amount import Amount
@@ -510,6 +511,23 @@ def get_order_ids_seen(journal: JournalEditor,
         order_ids.setdefault(order_id, []).append(entry)
     return order_ids
 
+def get_refunds_seen(journal: JournalEditor,
+                       amazon_account: str) -> Dict[str, List[Transaction]]:
+    def _get_refund_id(entry: Directive, amazon_account: str):
+        if not isinstance(entry, Transaction): return None
+        meta = entry.meta
+        if meta is None: return None
+        if meta.get(AMAZON_ACCOUNT_KEY) != amazon_account:
+            return None
+        return meta.get("refund_id", None)
+    
+    refund_ids = dict()  # type: Dict[str, List[Transaction]]
+    for entry in journal.all_entries:
+        refund_id = _get_refund_id(entry, amazon_account)
+        if not refund_id: continue
+        refund_ids.setdefault(refund_id, []).append(entry)
+    return refund_ids
+
 class AmazonPickler():
     def __init__( self, pickle_dir: Optional[str] ):
         self.pickle_dir = pickle_dir
@@ -597,6 +615,23 @@ class AmazonSource(Source):
             self.invoice_filenames.append((order_id, filename))
         self._cached_invoices = {
         }  # type: Dict[str, Tuple[Optional[Order], str]]
+        refunds_filename = os.path.join(self.directory, 'refunds.csv')
+        self.refunds = []
+        if os.path.exists(refunds_filename):
+            self.refunds_filename = refunds_filename
+            logger.debug(f"Found refunds file {refunds_filename}")
+            def parse_date(date_string):
+                # Parse the date string using the strptime() function
+                date_object = datetime.datetime.strptime(date_string, "%B %d, %Y").date()
+                return date_object
+            with open(refunds_filename, "r", encoding="utf-8", newline="") as csvfile:
+                reader = csv.DictReader(csvfile)
+                assert reader.fieldnames == ['Date', 'Description', 'Amount'], f"Unexpected fieldnames in refunds file {reader.fieldnames}"
+                for row in reader:
+                    date = parse_date(row['Date'])
+                    amount = self.locale.parse_amount(row['Amount'])
+                    logger.debug("Refund: %s %s %s" % (row['Description'], date, amount))
+                    self.refunds.append([row['Date'], row['Description'], row['Amount']])
 
     def _get_invoice(self, results: SourceResults, order_id: str, invoice_filename: str):
         if invoice_filename in self._cached_invoices:
@@ -615,6 +650,7 @@ class AmazonSource(Source):
     def prepare(self, journal: JournalEditor, results: SourceResults):
         credit_card_accounts = get_credit_card_accounts(journal)
         order_ids_seen = get_order_ids_seen(journal, self.amazon_account)
+        refund_ids_seen = get_refunds_seen(journal, self.amazon_account)
         for order_id, transactions in order_ids_seen.items():
             if len(transactions) > 1:
                 results.add_invalid_reference(
@@ -662,6 +698,37 @@ class AmazonSource(Source):
                         filename=path,
                     ),
                     entries=[transaction],
+                ))
+            
+        for date, desc, amount in self.refunds:
+            meta = collections.OrderedDict()
+            meta[AMAZON_ACCOUNT_KEY] = self.amazon_account            
+            refund_account = self.posttax_adjustment_accounts.get('gift_card', FIXME_ACCOUNT)
+            postings = [
+                Posting(FIXME_ACCOUNT, amount, None, None, None, None),
+                Posting(refund_account, None, None, None, None, None)
+            ]
+            # Gift card claim (claim code xxxx-xxxxxx-4RAR)
+            meta["refund_id"] = desc.split("-")[-1][:-1]
+            tnx = Transaction(
+                date = date,
+                meta = meta,
+                payee = None,
+                narration = desc,
+                flag=FLAG_OKAY,
+                tags=EMPTY_SET,
+                links=EMPTY_SET,
+                postings = postings
+            )            
+
+            results.add_pending_entry(
+                ImportResult(
+                    date=tnx.date,
+                    info=dict(
+                        type='text/html',
+                        filename=self.refunds_filename,
+                    ),
+                    entries=[tnx],
                 ))
 
     @property
