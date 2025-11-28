@@ -86,6 +86,12 @@ class PaypalCsvImporter(CSVImporter):
         txn.postings.append(fixme_posting)
 
         existing_meta = dict(asset_posting.meta) if asset_posting.meta else {}
+        metadata_for_asset = {
+            key: value
+            for key, value in metadata.items()
+            if key.startswith("paypal_") and key != "paypal_balance"
+        }
+        existing_meta.update(metadata_for_asset)
         existing_meta.update({
             "paypal_transaction_id": row_map.get("Transaction ID"),
             "paypal_status": row_map.get("Status"),
@@ -110,6 +116,7 @@ class PaypalCsvImporter(CSVImporter):
         for entry in filtered:
             if self._is_generic_type(entry):
                 continue
+            conversion = None
             if not self._is_us_currency(entry):
                 key = self._time_key(entry)
                 conversion = conversion_map.pop(key, None) if key else None
@@ -177,6 +184,47 @@ class PaypalCsvImporter(CSVImporter):
             narration = f"{narration} ({original_amount_str})".strip()
 
         return merchant._replace(postings=new_postings, narration=narration)
+
+    def _attach_conversion_metadata(self, entry: data.Transaction,
+                                    conversion: data.Transaction) -> data.Transaction:
+        fixme = next((p for p in entry.postings if p.account == FIXME_ACCOUNT), None)
+        conv_fixme = next(
+            (p for p in conversion.postings if p.account == FIXME_ACCOUNT), None)
+        if not fixme:
+            return entry
+
+        fixme_meta = dict(fixme.meta or {})
+        fixme_meta["paypal_currency"] = "USD"
+        if conv_fixme and conv_fixme.meta:
+            for field in ("paypal_exchange_rate", "paypal_total", "paypal_fees"):
+                if field in conv_fixme.meta:
+                    fixme_meta[field] = conv_fixme.meta[field]
+        if "paypal_status" in fixme_meta:
+            fixme_meta["paypal_status"] = "Completed"
+        new_fixme = fixme._replace(meta=fixme_meta)
+
+        new_postings = []
+        for posting in entry.postings:
+            if posting is fixme:
+                new_postings.append(new_fixme)
+            else:
+                new_postings.append(posting)
+        return entry._replace(postings=new_postings)
+
+    def _mark_completed(self, entry: data.Transaction) -> data.Transaction:
+        asset = next((p for p in entry.postings if p.account == self.account), None)
+        if not asset:
+            return entry
+        asset_meta = dict(asset.meta or {})
+        asset_meta["paypal_status"] = "Completed"
+        new_asset = asset._replace(meta=asset_meta)
+        new_postings = []
+        for posting in entry.postings:
+            if posting is asset:
+                new_postings.append(new_asset)
+            else:
+                new_postings.append(posting)
+        return entry._replace(postings=new_postings)
 
     def _is_us_currency(self, entry: data.Transaction) -> bool:
         fixme = next((p for p in entry.postings if p.account == FIXME_ACCOUNT), None)
