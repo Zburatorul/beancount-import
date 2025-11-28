@@ -96,37 +96,27 @@ class PaypalCsvImporter(CSVImporter):
 
     def extract(self, file, existing_entries=None):
         entries = super().extract(file, existing_entries=existing_entries)
-        groups: dict[str, list[data.Transaction]] = {}
-        others: list[data.Transaction] = []
+        conversion_map: dict[tuple[str | None, str | None, str | None], data.Transaction] = {}
+        filtered: list[data.Transaction] = []
         for entry in entries:
-            tid = self._transaction_id(entry)
-            if tid:
-                groups.setdefault(tid, []).append(entry)
-            else:
-                others.append(entry)
-
-        merged: list[data.Transaction] = []
-        for group in groups.values():
-            primary = self._select_primary_entry(group)
-            if primary is None:
+            if self._is_conversion(entry):
+                key = self._time_key(entry)
+                if key and key not in conversion_map:
+                    conversion_map[key] = entry
                 continue
-            conversion = self._find_conversion_entry(group)
-            if conversion:
-                primary = self._merge_entries(primary, conversion)
-            if self._is_generic_type(primary):
-                continue
-            if self._is_completed(primary) and self._is_us_currency(primary):
-                merged.append(primary)
+            filtered.append(entry)
 
         result: list[data.Transaction] = []
-        for entry in others:
-            if self._is_conversion(entry):
-                continue
+        for entry in filtered:
             if self._is_generic_type(entry):
                 continue
+            if not self._is_us_currency(entry):
+                key = self._time_key(entry)
+                conversion = conversion_map.pop(key, None) if key else None
+                if conversion:
+                    entry = self._merge_entries(entry, conversion)
             if self._is_completed(entry) and self._is_us_currency(entry):
                 result.append(entry)
-        result.extend(merged)
         return result
 
     def _is_completed(self, entry: data.Transaction) -> bool:
@@ -206,29 +196,12 @@ class PaypalCsvImporter(CSVImporter):
             fixme_posting.meta.get("paypal_timezone"),
         )
 
-    def _select_primary_entry(self, group: list[data.Transaction]) -> data.Transaction | None:
-        primary = None
-        for entry in group:
-            if self._is_conversion(entry):
-                continue
-            if primary is None:
-                primary = entry
-            type_text = (entry.narration or "").strip().lower()
-            if type_text and type_text not in self._generic_types():
-                return entry
-        return primary
-
-    def _find_conversion_entry(self, group: list[data.Transaction]) -> data.Transaction | None:
-        for entry in group:
-            if self._is_conversion(entry):
-                return entry
-        return None
-
     def _generic_types(self) -> set[str]:
         return {
             "general authorization",
             "account hold for open authorization",
             "reversal of general account hold",
+            "general currency conversion",
         }
 
     def _is_generic_type(self, entry: data.Transaction) -> bool:
