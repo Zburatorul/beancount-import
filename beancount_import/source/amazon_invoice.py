@@ -150,6 +150,7 @@ class Locale_en_US(Locale_Data):
         '.*[0-9]+% Off.*',
         'Courtesy Credit',
         'Extra Savings',
+        'Exclusive Promotion Applied',
         '(?:.*) Discount',
         'Gift[ -]Wrap',
     ]) + ') *:')
@@ -1473,22 +1474,56 @@ def parse_new_style_invoice(soup, locale=Locale_en_US) -> Order:
     items_subtotal_text = get_summary_value(locale.items_subtotal)
     items_subtotal = locale.parse_amount(items_subtotal_text) if items_subtotal_text else None
 
-    # Shipping
-    shipping_text = get_summary_value(r'Shipping & Handling:')
-    shipping_amount = locale.parse_amount(shipping_text) if shipping_text else Amount(D(0), locale.currency)
+    # Adjustments (Shipping, Promotion, etc.)
+    # We iterate over the patterns defined in the locale
     
+    # Pretax Adjustments
     pretax_adjustments = []
-    if shipping_amount and shipping_amount.number != ZERO:
-        pretax_adjustments.append(Adjustment(description="Shipping & Handling", amount=shipping_amount))
+    
+    # Helper to find adjustments based on regex pattern
+    def find_adjustments(pattern_str):
+        adjustments = []
+        if not order_summary_div: return adjustments
+        # The pattern might be complex (joined by |), so we search for text matching it
+        # We can iterate over all rows in the summary
+        rows = order_summary_div.find_all(class_="od-line-item-row")
+        for row in rows:
+            label_div = row.find(class_="od-line-item-row-label")
+            if not label_div: continue
+            label_text = label_div.get_text(strip=True)
+            
+            # Check if label matches the pattern
+            # The pattern in locale is often like "(?:Shipping|Promotion ...):"
+            # We need to be careful with the trailing colon which might or might not be in the text
+            # The locale patterns usually include the colon.
+            
+            if re.match(pattern_str, label_text, re.IGNORECASE):
+                content_div = row.find(class_="od-line-item-row-content")
+                if content_div:
+                    amount_text = content_div.get_text(strip=True)
+                    amount = locale.parse_amount(amount_text)
+                    if amount:
+                        # Clean label (remove colon)
+                        clean_label = label_text.rstrip(':').strip()
+                        adjustments.append(Adjustment(description=clean_label, amount=amount))
+        return adjustments
+
+    pretax_adjustments.extend(find_adjustments(locale.pretax_adjustment_fields_pattern))
 
     # Total before tax
     total_before_tax_text = get_summary_value(locale.total_before_tax)
     total_before_tax = locale.parse_amount(total_before_tax_text) if total_before_tax_text else None
 
-    # Tax
+    # Tax (and other posttax adjustments)
+    # Tax is usually separate but might be in posttax patterns for some locales?
+    # In en_US, tax is separate.
+    
     tax_text = get_summary_value(locale.regular_estimated_tax)
     tax_amount = locale.parse_amount(tax_text) if tax_text else Amount(D(0), locale.currency)
     tax = [Adjustment(description="Estimated tax to be collected", amount=tax_amount)] if tax_amount and tax_amount.number != ZERO else []
+    
+    # Posttax Adjustments
+    posttax_adjustments = find_adjustments(locale.posttax_adjustment_fields_pattern)
 
     # Grand Total
     grand_total_text = get_summary_value(locale.regular_total_order)
@@ -1572,6 +1607,6 @@ def parse_new_style_invoice(soup, locale=Locale_en_US) -> Order:
         credit_card_transactions=credit_card_transactions,
         pretax_adjustments=pretax_adjustments,
         tax=tax_amount,
-        posttax_adjustments=[],
+        posttax_adjustments=posttax_adjustments,
         errors=errors
     )

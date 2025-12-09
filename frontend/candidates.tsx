@@ -153,6 +153,15 @@ export class CandidatesComponent extends React.PureComponent<
     this.setState({ disabledUsedTransactions: newDisabled });
   };
 
+  private deselectAllUsedTransactions = () => {
+    const { used_transactions } = this.props.candidates;
+    const newDisabled = new Set<number>();
+    for (let i = 1; i < used_transactions.length; i++) {
+      newDisabled.add(i);
+    }
+    this.setState({ disabledUsedTransactions: newDisabled });
+  };
+
   get selectedCandidate() {
     const { candidates } = this.props.candidates;
     return candidates[this.state.selectedCandidateIndex];
@@ -437,7 +446,7 @@ export class CandidatesComponent extends React.PureComponent<
             </button>
           </div>
           <div className="action-button__group">
-          <button
+            <button
               onClick={this.handleConfirm}
               title="Confirm selected candidate, keyboard shortcut: enter"
               className="action-button"
@@ -469,6 +478,13 @@ export class CandidatesComponent extends React.PureComponent<
               className="action-button"
             >
               Retrain
+            </button>
+            <button
+              onClick={this.deselectAllUsedTransactions}
+              title="Deselect all matched transactions, keyboard shortcut: d"
+              className="action-button"
+            >
+              Deselect
             </button>
           </div>
         </div>
@@ -503,7 +519,7 @@ export class CandidatesComponent extends React.PureComponent<
                 onHover={this.setHoverCandidate}
                 inputState={
                   inputState !== undefined &&
-                  inputState.candidateIndex === index
+                    inputState.candidateIndex === index
                     ? inputState
                     : undefined
                 }
@@ -574,6 +590,12 @@ export class CandidatesComponent extends React.PureComponent<
         break;
       case "f":
         this.fixme();
+        break;
+      case "x":
+        this.clearAllAccounts();
+        break;
+      case "d":
+        this.deselectAllUsedTransactions();
         break;
       case "t":
         this.retrain();

@@ -313,10 +313,19 @@ def make_amazon_transaction(
     for shipment in invoice.shipments:
         all_items.extend(shipment.items)
 
+    def truncate_desc(desc):
+        words = desc.split()
+        if len(words) <= 5:
+            return desc
+        truncated = ' '.join(words[:5])
+        if truncated.endswith('('):
+            return truncated + '...)'
+        return truncated + '...'
+
     if not all_items:
         narration = 'Order'
     elif len(all_items) == 1:
-        narration = ' '.join(all_items[0].description.split()[:5])
+        narration = truncate_desc(all_items[0].description)
     else:
         def get_item_amount(item):
             quantity = getattr(item, 'quantity', ONE)
@@ -324,7 +333,7 @@ def make_amazon_transaction(
 
         max_item = max(all_items, key=get_item_amount)
         narration = '%d items: %s' % (len(all_items),
-                                      ' '.join(max_item.description.split()[:5]))
+                                      truncate_desc(max_item.description))
 
     txn = Transaction(
         date=invoice.order_date,
