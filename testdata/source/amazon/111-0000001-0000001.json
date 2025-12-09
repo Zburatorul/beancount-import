@@ -1,0 +1,79 @@
+{
+    "order_id": "111-0000001-0000001",
+    "order_date": "2025-03-15",
+    "shipments": [
+        {
+            "shipped_date": null,
+            "items": [
+                {
+                    "quantity": "2",
+                    "description": "Example Brand Liquid Hand Soap Refill, Unscented, 32 fl oz",
+                    "sold_by": "Amazon.com",
+                    "condition": null,
+                    "price": {
+                        "number": "10.25",
+                        "currency": "USD"
+                    }
+                }
+            ],
+            "items_subtotal": {
+                "number": "20.50",
+                "currency": "USD"
+            },
+            "pretax_adjustments": [
+                {
+                    "description": "Shipping & Handling",
+                    "amount": {
+                        "number": "2.50",
+                        "currency": "USD"
+                    }
+                }
+            ],
+            "total_before_tax": {
+                "number": "23.00",
+                "currency": "USD"
+            },
+            "posttax_adjustments": [],
+            "tax": [
+                {
+                    "description": "Estimated tax to be collected",
+                    "amount": {
+                        "number": "2.07",
+                        "currency": "USD"
+                    }
+                }
+            ],
+            "total": {
+                "number": "25.07",
+                "currency": "USD"
+            },
+            "errors": []
+        }
+    ],
+    "credit_card_transactions": [
+        {
+            "date": "2025-03-15",
+            "card_description": "Prime Visa",
+            "card_ending_in": "0000",
+            "amount": {
+                "number": "25.07",
+                "currency": "USD"
+            }
+        }
+    ],
+    "pretax_adjustments": [
+        {
+            "description": "Shipping & Handling",
+            "amount": {
+                "number": "2.50",
+                "currency": "USD"
+            }
+        }
+    ],
+    "tax": {
+        "number": "2.07",
+        "currency": "USD"
+    },
+    "posttax_adjustments": [],
+    "errors": []
+}

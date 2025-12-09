@@ -13,7 +13,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2016-02-07 * "Amazon.com" "Order"
+2016-02-07 * "Amazon.com" "Casio Men's W916-8AV Alarm Chronograph"
   amazon_account: "name@domain.com"
   amazon_order_id: "166-7926740-5141621"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"166-7926740-5141621\"], \"path\": \"<testdata>/166-7926740-5141621.html\", \"type\": \"text/html\"}"
@@ -46,7 +46,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2016-06-30 * "Amazon.com" "Order"
+2016-06-30 * "Amazon.com" "Case for Mars"
   amazon_account: "name@domain.com"
   amazon_order_id: "D56-5204779-4181560"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"D56-5204779-4181560\"], \"path\": \"<testdata>/D56-5204779-4181560.html\", \"type\": \"text/html\"}"
@@ -74,7 +74,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2016-08-30 * "Amazon.com" "Order"
+2016-08-30 * "Amazon.com" "Car Mount, Anker CD Slot"
   amazon_account: "name@domain.com"
   amazon_order_id: "781-8429198-6057878"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"781-8429198-6057878\"], \"path\": \"<testdata>/781-8429198-6057878.html\", \"type\": \"text/html\"}"
@@ -153,7 +153,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2017-03-23 * "Amazon.com" "Order"
+2017-03-23 * "Amazon.com" "11 items: Bloom Daily Planners All In"
   amazon_account: "name@domain.com"
   amazon_order_id: "277-5312419-9119541"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"277-5312419-9119541\"], \"path\": \"<testdata>/277-5312419-9119541.html\", \"type\": \"text/html\"}"
@@ -263,7 +263,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2019-09-12 * "Amazon.com" "Order"
+2019-09-12 * "Amazon.com" "Citizen CTO Silver Dial Leather"
   amazon_account: "name@domain.com"
   amazon_order_id: "381-3642728-6932366"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"381-3642728-6932366\"], \"path\": \"<testdata>/381-3642728-6932366.html\", \"type\": \"text/html\"}"
@@ -308,7 +308,7 @@
 ;             },
 ;             null
 ;           ]
-2019-09-18 * "Amazon.com" "Order"
+2019-09-18 * "Amazon.com" "3 items: DLGJPA Men's Quick Drying Water"
   amazon_account: "name@domain.com"
   amazon_order_id: "511-1525861-4349605"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"511-1525861-4349605\"], \"path\": \"<testdata>/511-1525861-4349605.html\", \"type\": \"text/html\"}"
@@ -367,7 +367,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2020-09-01 * "Amazon.com" "Order"
+2020-09-01 * "Amazon.com" "5 items: Pork Sausage Link Italian Mild"
   amazon_account: "name@domain.com"
   amazon_order_id: "114-4993473-6978631"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"114-4993473-6978631\"], \"path\": \"<testdata>/114-4993473-6978631.html\", \"type\": \"text/html\"}"
@@ -427,7 +427,7 @@
 ;               "source_account": ""
 ;             }
 ;           ]
-2020-10-24 * "Amazon.com" "Order"
+2020-10-24 * "Amazon.com" "Magnetic USB C Adapter 20Pins"
   amazon_account: "name@domain.com"
   amazon_order_id: "111-1120740-1860260"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"111-1120740-1860260\"], \"path\": \"<testdata>/111-1120740-1860260.html\", \"type\": \"text/html\"}"
@@ -445,3 +445,44 @@
   Liabilities:Credit-Card     0.00 USD
     amazon_credit_card_description: "Amazon.com Visa Signature ending in 1234"
     transaction_date: 2020-10-24
+
+;; date: 2025-03-15
+;; info: {"filename": "<testdata>/111-0000001-0000001.html", "type": "text/html"}
+
+; features: [
+;             {
+;               "amount": "2.07 USD",
+;               "date": "2025-03-15",
+;               "key_value_pairs": {
+;                 "amazon_item_description": [
+;                   "Example Brand Liquid Hand Soap Refill, Unscented, 32 fl oz"
+;                 ]
+;               },
+;               "source_account": ""
+;             },
+;             {
+;               "amount": "-25.07 USD",
+;               "date": "2025-03-15",
+;               "key_value_pairs": {
+;                 "amazon_credit_card_description": [
+;                   "Prime Visa ending in 0000"
+;                 ]
+;               },
+;               "source_account": ""
+;             }
+;           ]
+2025-03-15 * "Amazon.com" "Example Brand Liquid Hand Soap"
+  amazon_account: "name@domain.com"
+  amazon_order_id: "111-0000001-0000001"
+  associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"111-0000001-0000001\"], \"path\": \"<testdata>/111-0000001-0000001.html\", \"type\": \"text/html\"}"
+  Expenses:FIXME:A   20.50 USD
+    amazon_item_description: "Example Brand Liquid Hand Soap Refill, Unscented, 32 fl oz"
+    amazon_item_quantity: 2
+    amazon_seller: "Amazon.com"
+  Expenses:FIXME:A    2.50 USD
+    amazon_invoice_description: "Shipping & Handling"
+  Expenses:FIXME:A    2.07 USD
+    amazon_invoice_description: "Estimated tax to be collected"
+  Expenses:FIXME    -25.07 USD
+    amazon_credit_card_description: "Prime Visa ending in 0000"
+    transaction_date: 2025-03-15

@@ -309,6 +309,23 @@ def make_amazon_transaction(
         amazon_account: str,
         payee='Amazon.com'
 ):
+    all_items = []
+    for shipment in invoice.shipments:
+        all_items.extend(shipment.items)
+
+    if not all_items:
+        narration = 'Order'
+    elif len(all_items) == 1:
+        narration = ' '.join(all_items[0].description.split()[:5])
+    else:
+        def get_item_amount(item):
+            quantity = getattr(item, 'quantity', ONE)
+            return item.price.number * quantity
+
+        max_item = max(all_items, key=get_item_amount)
+        narration = '%d items: %s' % (len(all_items),
+                                      ' '.join(max_item.description.split()[:5]))
+
     txn = Transaction(
         date=invoice.order_date,
         meta=collections.OrderedDict([
@@ -316,7 +333,7 @@ def make_amazon_transaction(
             (AMAZON_ACCOUNT_KEY, amazon_account),
         ]),
         payee=payee,
-        narration='Order',
+        narration=narration,
         flag=FLAG_OKAY,
         tags=EMPTY_SET,
         links=EMPTY_SET,
@@ -597,15 +614,26 @@ class AmazonSource(Source):
                         [(t, None) for t in transactions]))
 
         for order_id, invoice_filename in self.invoice_filenames:
-            if order_id in order_ids_seen: continue
+            if order_id in order_ids_seen:
+                continue
+            invoice_path = os.path.realpath(
+                os.path.join(self.directory, invoice_filename))
             try:
-              invoice, path = self._get_invoice(results, order_id, invoice_filename)
-            except:
+                invoice, path = self._get_invoice(results, order_id,
+                                                  invoice_filename)
+            except AssertionError as err:
+                msg = ('Skipped invoice %s because it does not match the '
+                       'expected invoice format (%s)' % (invoice_filename,
+                                                          err))
+                results.add_warning(msg)
+                self._cached_invoices[invoice_filename] = (None, invoice_path)
+                continue
+            except Exception:
                 results.add_error('Failed to parse invoice %s: %s' % (
                     invoice_filename, sys.exc_info()))
                 continue
             if invoice is None:
-              continue
+                continue
 
             if self.earliest_date is not None and invoice.order_date < self.earliest_date:
                 self.log_status("Skipping order with date [%s] before [%s]" % ( str(invoice.order_date), self.earliest_date ) )

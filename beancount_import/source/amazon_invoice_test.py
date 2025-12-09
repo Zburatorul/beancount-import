@@ -16,6 +16,7 @@ testdata_dir = os.path.abspath(
     '781-8429198-6057878',
     '166-7926740-5141621',
     'D56-5204779-4181560',
+    '111-0000001-0000001',
 ])
 def test_parsing_en_US(name: str):
     source_path = os.path.join(testdata_dir, name + '.html')

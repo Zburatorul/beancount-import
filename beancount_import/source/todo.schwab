@@ -1,0 +1,3 @@
+* Add commodity directives for every new commodity
+* handle bonds, and US Treasuries specifically
+* allow users to specify if currency transaction should go to subaccount, or stay in top-level account like OFX import does it
