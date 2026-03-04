@@ -1,6 +1,6 @@
 <journal-dir>/journal.beancount
 +
-+2021-08-02 * "Amazon.com" "Order"
++2021-08-02 * "Amazon.com" "23 items: Airheads Candy Bars, Variety Bulk..."
 +  amazon_account: "a@example.com"
 +  amazon_order_id: "494-0575539-0474804"
 +  [0]Expenses:FIXME    1.99 USD

@@ -2,7 +2,7 @@
 ;; date: 2021-08-02
 ;; info: {"filename": "<testdata>/source/amazon_large/113-3282794-2881819.html", "type": "text/html"}
 
-2021-08-02 * "Amazon.com" "Order"
+2021-08-02 * "Amazon.com" "23 items: Airheads Candy Bars, Variety Bulk..."
   amazon_account: "a@example.com"
   amazon_order_id: "494-0575539-0474804"
   Expenses:FIXME:A    1.99 USD
@@ -160,7 +160,7 @@
 ;; date: 2021-08-31
 ;; info: {"filename": "<testdata>/source/amazon_large/112-1784496-5402621.html", "type": "text/html"}
 
-2021-08-31 * "Amazon.com" "Order"
+2021-08-31 * "Amazon.com" "15 items: Amazon Basics Reusable Silicone Baking..."
   amazon_account: "a@example.com"
   amazon_order_id: "041-8257240-2303710"
   Expenses:FIXME:A    3.19 USD
@@ -274,7 +274,7 @@
 ;; date: 2021-09-07
 ;; info: {"filename": "<testdata>/source/amazon_large/112-8112713-5521064.html", "type": "text/html"}
 
-2021-09-07 * "Amazon.com" "Order"
+2021-09-07 * "Amazon.com" "23 items: Truly Lemonade Hard Seltzer Variety..."
   amazon_account: "a@example.com"
   amazon_order_id: "014-7850844-8225895"
   Expenses:FIXME:A     3.99 USD
@@ -430,7 +430,7 @@
 ;; date: 2021-09-11
 ;; info: {"filename": "<testdata>/source/amazon_large/112-4949356-2356241.html", "type": "text/html"}
 
-2021-09-11 * "Amazon.com" "Order"
+2021-09-11 * "Amazon.com" "27 items: Cascadian Farm Organic Mango Strawberry..."
   amazon_account: "a@example.com"
   amazon_order_id: "840-3161905-1049369"
   Expenses:FIXME:A    11.02 USD
@@ -610,7 +610,7 @@
 ;; date: 2021-09-15
 ;; info: {"filename": "<testdata>/source/amazon_large/112-5611048-5043463.html", "type": "text/html"}
 
-2021-09-15 * "Amazon.com" "Order"
+2021-09-15 * "Amazon.com" "26 items: Vega Protein and Greens, Berry,..."
   amazon_account: "a@example.com"
   amazon_order_id: "639-2582363-4453496"
   Expenses:FIXME:A     6.56 USD
