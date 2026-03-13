@@ -290,6 +290,10 @@ class PaypalJsonSource(LinkBasedSource, Source):
 
         booking_currency = booking_currency or txn.get('amounts', {}).get('currencyCode', 'USD')
 
+        if booking_currency != 'USD':
+            self.log_status(f'paypal_json: skipping {txn_id} - non-USD amount ({booking_amount} {booking_currency}), no USD equivalent available')
+            return None
+
         # ── Narration ──────────────────────────────────────────────────────
         narration = display_type or 'Payment'
         if memo:
