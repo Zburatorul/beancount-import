@@ -232,14 +232,14 @@ class PaypalJsonSource(LinkBasedSource, Source):
             return None
 
         # Counterparty info
-        counterparty_name = txn.get('counterpartyInfo', {}).get('counterpartyName', '')
+        counterparty_name = (txn.get('counterpartyInfo', {}).get('counterpartyName', '') or '').strip()
         fts = txn.get('ftsSearchInfo', {})
-        counterparty_email = fts.get('email') or ''
-        memo = fts.get('memo') or ''
-        display_type = fts.get('displayType', '')
+        counterparty_email = (fts.get('email') or '').strip()
+        memo = (fts.get('memo') or '').strip()
+        display_type = (fts.get('displayType', '') or '').strip()
 
         # Transaction type / direction
-        txn_type = txn.get('type', '')
+        txn_type = (txn.get('type', '') or '').strip()
         filter_set = txn.get('filterSet', [])
 
         is_credit = False  # money flowing into PayPal balance
@@ -329,9 +329,9 @@ class PaypalJsonSource(LinkBasedSource, Source):
             assets_meta[self.prefix + '_memo'] = memo
         assets_meta[self.prefix + '_type'] = txn_type
         if funding_source:
-            last4 = funding_source.get('last4') or ''
-            institution = funding_source.get('institution') or ''
-            nickname = funding_source.get('nickname') or ''
+            last4 = (funding_source.get('last4') or '').strip()
+            institution = (funding_source.get('institution') or '').strip()
+            nickname = (funding_source.get('nickname') or '').strip()
             if last4:
                 assets_meta[self.prefix + '_funding_source_last4'] = last4
             if institution:
