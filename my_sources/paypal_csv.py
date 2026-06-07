@@ -6,7 +6,7 @@ from typing import Dict, Iterable
 
 from beancount.core import data
 from beancount.core.amount import Amount
-from beancount.ingest.importers.csv import Importer as CSVImporter, Col
+from beangulp.importers.csv import Importer as CSVImporter, Col
 from beancount_import.matching import FIXME_ACCOUNT
 
 PAYPAL_HEADER = [

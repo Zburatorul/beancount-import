@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from beancount.core.number import D
-from beancount.ingest.cache import get_file
+from beangulp.cache import get_file
 
 from my_sources.paypal_csv import PAYPAL_HEADER, make_paypal_csv_importer
 
