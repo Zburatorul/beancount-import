@@ -277,7 +277,8 @@ from beancount.core.flags import FLAG_OKAY
 from beancount.core.number import ZERO, ONE
 import beancount.core.amount
 
-from .amazon_invoice import LOCALES, parse_invoice, DigitalItem, Order
+from .amazon_invoice import (LOCALES, parse_invoice, DigitalItem, Order,
+                             get_wfm_receipt_path)
 
 from ..matching import FIXME_ACCOUNT, SimpleInventory
 from ..posting_date import POSTING_DATE_KEY, POSTING_TRANSACTION_DATE_KEY
@@ -557,6 +558,10 @@ class AmazonPickler():
 
             if invoice_mtime is None or pickle_mtime is None: return None
             if pickle_mtime < invoice_mtime: return None
+            receipt_mtime = AmazonPickler.try_get_mtime(
+                get_wfm_receipt_path(invoice_path))
+            if receipt_mtime is not None and pickle_mtime < receipt_mtime:
+                return None
 
             with open(pickle_path, "rb") as f:
                 return pickle.load( f )

@@ -1,4 +1,5 @@
 import collections
+import datetime
 import json
 import os
 
@@ -59,3 +60,50 @@ def test_parsing_de_DE(name: str):
     if expected_str != actual_str:
         print(actual_str)
     assert expected_str == actual_str
+
+
+def _wfm_order(subtotal='20.00'):
+    usd = lambda x: amazon_invoice.Amount(amazon_invoice.D(x), 'USD')
+    shipment = amazon_invoice.Shipment(
+        shipped_date=None, items=[], items_subtotal=usd(subtotal),
+        pretax_adjustments=[], total_before_tax=usd(subtotal),
+        posttax_adjustments=[], tax=[], total=usd(subtotal), errors=[])
+    card = amazon_invoice.CreditCardTransaction(
+        date=datetime.date(2026, 6, 1), card_description='Amazon Visa',
+        card_ending_in='0000', amount=usd(subtotal))
+    return amazon_invoice.Order(
+        order_id='113-0000002-0000002', order_date=datetime.date(2026, 6, 1),
+        shipments=[shipment], credit_card_transactions=[card],
+        pretax_adjustments=[], tax=usd('0'), posttax_adjustments=[], errors=[])
+
+
+def test_parse_wfm_receipt():
+    receipt = amazon_invoice.parse_wfm_receipt(
+        os.path.join(testdata_dir, 'wfm', '113-0000002-0000002.html'))
+    assert receipt.order_id == '113-0000002-0000002'
+    assert str(receipt.item_subtotal) == '20.00 USD'
+    assert str(receipt.savings) == '-2.50 USD'
+    assert str(receipt.tax) == '1.25 USD'
+    assert str(receipt.grand_total) == '18.75 USD'
+    assert [(t, str(a)) for t, a in receipt.payments] == [('0000', '18.75 USD')]
+
+
+def test_apply_wfm_receipt():
+    receipt = amazon_invoice.parse_wfm_receipt(
+        os.path.join(testdata_dir, 'wfm', '113-0000002-0000002.html'))
+    order = amazon_invoice.apply_wfm_receipt(_wfm_order(), receipt)
+    assert order.errors == []
+    shipment, = order.shipments
+    assert [(a.description, str(a.amount)) for a in shipment.pretax_adjustments] == [
+        ('Whole Foods promotions', '-2.50 USD')]
+    assert [(a.description, str(a.amount)) for a in shipment.tax] == [
+        ('Sales Tax', '1.25 USD')]
+    card, = order.credit_card_transactions
+    assert (card.card_description, str(card.amount)) == ('Amazon Visa', '18.75 USD')
+
+
+def test_apply_wfm_receipt_reports_subtotal_mismatch():
+    receipt = amazon_invoice.parse_wfm_receipt(
+        os.path.join(testdata_dir, 'wfm', '113-0000002-0000002.html'))
+    order = amazon_invoice.apply_wfm_receipt(_wfm_order('30.00'), receipt)
+    assert any('item subtotal' in e for e in order.errors)

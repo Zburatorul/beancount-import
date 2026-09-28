@@ -39,6 +39,7 @@ from typing import (
     Sequence,
     cast,
     Type,
+    Tuple,
     Callable )
 from abc import ABC, abstractmethod
 import collections
@@ -798,7 +799,13 @@ def parse_invoice(path: str, locale=Locale_en_US) -> Optional[Order]:
         logger.debug('identified as digital invoice')
         return parse_digital_order_invoice(path, locale=locale)
     logger.debug('identified as regular invoice')
-    return parse_regular_order_invoice(path, locale=locale)
+    order = parse_regular_order_invoice(path, locale=locale)
+    receipt_path = get_wfm_receipt_path(path)
+    if order is not None and os.path.exists(receipt_path):
+        logger.debug('applying Whole Foods receipt %s', receipt_path)
+        order = apply_wfm_receipt(
+            order, parse_wfm_receipt(receipt_path, locale=locale))
+    return order
 
 
 def parse_regular_order_invoice(path: str, locale=Locale_en_US) -> Order:
@@ -1012,7 +1019,7 @@ def parse_regular_order_invoice(path: str, locale=Locale_en_US) -> Order:
                       (total_payments, adjusted_grand_total))
 
     logger.debug('...finished parsing regular invoice.')
-    return Order(
+    order = Order(
         order_date=order_date,
         order_id=order_id,
         shipments=shipments,
@@ -1021,6 +1028,126 @@ def parse_regular_order_invoice(path: str, locale=Locale_en_US) -> Order:
         errors=sum((shipment.errors
                     for shipment in shipments), cast(Errors, [])) + errors,
         **output_fields)
+    return order
+
+
+# ---------------------------------------------------------------------------
+# Whole Foods Market receipts
+#
+# The print-invoice page that finance-dl saves for a Whole Foods Market order
+# lists only item list prices: its tax is $0.00 and it omits promotions, so its
+# grand total does not match what the card was charged.  The order-details page
+# (https://www.amazon.com/fopo/order-details?orderID=...) has a "Purchase
+# Summary" with the real savings, tax and amount charged.  finance-dl stores
+# that page as <directory>/wfm/<order-id>.html next to the invoice.
+# ---------------------------------------------------------------------------
+
+WFM_RECEIPT_DIRNAME = 'wfm'
+WFM_PROMOTIONS_DESCRIPTION = 'Whole Foods promotions'
+
+WfmReceipt = NamedTuple('WfmReceipt', [
+    ('order_id', str),
+    ('item_subtotal', Amount),
+    ('savings', Amount),  # zero or negative
+    ('tax', Amount),
+    ('grand_total', Amount),
+    ('payments', List[Tuple[str, Amount]]),  # (card last 4 digits, amount)
+])
+
+
+def get_wfm_receipt_path(invoice_path: str) -> str:
+    directory, filename = os.path.split(invoice_path)
+    return os.path.join(directory, WFM_RECEIPT_DIRNAME, filename)
+
+
+def parse_wfm_receipt(path: str, locale=Locale_en_US) -> WfmReceipt:
+    """Parse the "Purchase Summary" of a Whole Foods Market order-details page."""
+    with open(path, 'rb') as f:
+        soup: BeautifulSoup = bs4.BeautifulSoup(f.read(), 'lxml')
+
+    def find_amount(element_id: str, required: bool) -> Amount:
+        node = soup.find(id=element_id)
+        if node is None:
+            if required:
+                raise ValueError('%s: no element %r' % (path, element_id))
+            return Amount(ZERO, 'USD')
+        return locale.parse_amount(node.get_text(strip=True))
+
+    summary = require_find(soup, id='wfm-subtotal-row').find_parent('div', class_='a-row').find_previous_sibling('div')
+    m = re.search(r'Order #:\s*(\d{3}-\d{7}-\d{7})', summary.get_text(' ', strip=True))
+    if m is None:
+        raise ValueError('%s: could not find order id in Purchase Summary' % path)
+
+    savings = find_amount('wfm-total-savings-amount', required=False)
+    payments = []
+    i = 0
+    while soup.find(id='wfm-%d-card-tail' % i) is not None:
+        tail = soup.find(id='wfm-%d-card-tail' % i).get_text(strip=True)
+        payments.append((tail.lstrip('*'),
+                         find_amount('wfm-%d-amount-charged' % i, True)))
+        i += 1
+    return WfmReceipt(
+        order_id=m.group(1),
+        item_subtotal=find_amount('wfm-subtotal-amount', True),
+        savings=Amount(-abs(savings.number), savings.currency),
+        tax=find_amount('wfm-tax-total-amount', False),
+        grand_total=find_amount('wfm-grand-total-amount', True),
+        payments=payments,
+    )
+
+
+def apply_wfm_receipt(order: Order, receipt: WfmReceipt) -> Order:
+    """Replace the print invoice's totals with the receipt's actual ones."""
+    errors = list(order.errors)
+    if receipt.order_id != order.order_id:
+        errors.append('Whole Foods receipt is for order %s' % receipt.order_id)
+        return order._replace(errors=errors)
+    if len(order.shipments) != 1:
+        errors.append('Whole Foods receipt ignored: expected 1 shipment, got %d'
+                      % len(order.shipments))
+        return order._replace(errors=errors)
+
+    shipment = order.shipments[0]
+    if shipment.items_subtotal != receipt.item_subtotal:
+        errors.append('Whole Foods receipt item subtotal is %s, but invoice has %s'
+                      % (receipt.item_subtotal, shipment.items_subtotal))
+    total_before_tax = add_amount(receipt.item_subtotal, receipt.savings)
+    expected_total = add_amount(total_before_tax, receipt.tax)
+    if expected_total != receipt.grand_total:
+        errors.append('Whole Foods receipt grand total is %s, but parts sum to %s'
+                      % (receipt.grand_total, expected_total))
+
+    shipment = shipment._replace(
+        pretax_adjustments=([Adjustment(WFM_PROMOTIONS_DESCRIPTION, receipt.savings)]
+                            if receipt.savings.number != ZERO else []),
+        total_before_tax=total_before_tax,
+        tax=([Adjustment('Sales Tax', receipt.tax)]
+             if receipt.tax.number != ZERO else []),
+        total=receipt.grand_total,
+    )
+
+    card_descriptions = {
+        c.card_ending_in: c.card_description
+        for c in order.credit_card_transactions}
+    payments = [
+        CreditCardTransaction(
+            date=order.order_date,
+            card_description=card_descriptions.get(tail, 'Whole Foods receipt'),
+            card_ending_in=tail,
+            amount=amount)
+        for tail, amount in receipt.payments]
+    if not payments:
+        payments = order.credit_card_transactions
+    elif reduce_amounts(p.amount for p in payments) != receipt.grand_total:
+        errors.append('Whole Foods receipt payments do not sum to grand total %s'
+                      % receipt.grand_total)
+
+    return order._replace(
+        shipments=[shipment],
+        credit_card_transactions=payments,
+        tax=receipt.tax,
+        errors=errors,
+    )
 
 
 def get_text_lines(parent_node):
