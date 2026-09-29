@@ -274,3 +274,26 @@ def test_reused_vectors_ignore_other_encoder():
     c.prepare()
     np.testing.assert_allclose(
         c._embeddings, c.encoder.transform(previous._examples), atol=1e-6)
+
+
+def test_predictions_carry_confidence():
+    loaded = _bare_reconciler([
+        (_item('Organic Whole Milk'), 'Expenses:Groceries'),
+        (_item('Organic Whole Milk'), 'Expenses:Groceries'),
+    ])
+    transaction, = test_util.parse("""
+        2020-02-01 * "Amazon.com" "Order"
+          amazon_account: "a@example.com"
+          Expenses:FIXME:A   4.00 USD
+            amazon_item_description: "Organic Whole Milk"
+          Expenses:FIXME:A   1.00 USD
+            amazon_invoice_description: "Sales Tax"
+          Expenses:FIXME   -5.00 USD
+        """)
+    (milk, milk_confidence), (tax, tax_confidence), (other, other_confidence) = (
+        loaded._predict_unknown_accounts(transaction))
+    assert milk == tax == 'Expenses:Groceries'
+    assert milk_confidence == tax_confidence == 1.0
+    # Nothing to go on: no prediction, no confidence.
+    assert other_confidence is None
+

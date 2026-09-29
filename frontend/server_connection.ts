@@ -28,7 +28,11 @@ export interface InvalidReference {
 /**
  * uniqueName, accountName, groupNumber, originalName, predictedName
  */
-export type SubstitutedAccount = [string, string, number, string, string];
+/**
+ * uniqueName, accountName, groupNumber, unknownAccountName, predictedAccountName,
+ * predictionConfidence (share of the classifier's vote, or null if none)
+ */
+export type SubstitutedAccount = [string, string, number, string, string, number | null];
 
 /**
  * originalStartLine, originalEndLine

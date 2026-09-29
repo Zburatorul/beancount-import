@@ -192,7 +192,7 @@ def get_prediction_explanation(classifier, features: Dict[str, bool]):
 
 AccountSubstitution = collections.namedtuple('AccountSubstitution', [
     'unique_name', 'account_name', 'group_number', 'unknown_account_name',
-    'predicted_account_name'
+    'predicted_account_name', 'prediction_confidence'
 ])
 
 
@@ -920,37 +920,32 @@ class LoadedReconciler(object):
 
     def _get_unknown_account_predictions(self,
                                          transaction: Transaction) -> List[str]:
-        if self._has_unconfirmed_account(transaction):
-            predicted_account_names, _ = self._group_predicted_accounts_by_name(transaction)
-            transaction.meta[UNCONFIRMED_ACCOUNT_KEY] = True
-            return predicted_account_names
-        if self._use_nearest_neighbor:
-            return self._predict_unknown_accounts_per_item(transaction)
-        group_prediction_inputs = self._feature_extractor.extract_unknown_account_group_features(
-            transaction)
-        group_predictions = [
-            self.predict_account(prediction_input)
-            for prediction_input in group_prediction_inputs
-        ]
-        group_numbers = training.get_unknown_account_group_numbers(transaction)
         return [
-            group_predictions[group_number] for group_number in group_numbers
+            account for account, _ in
+            self._predict_unknown_accounts(transaction)
         ]
 
-    def _predict_unknown_accounts_per_item(
-            self, transaction: Transaction) -> List[str]:
-        """Predicts each unknown-account posting.
+    def _predict_unknown_accounts(
+            self, transaction: Transaction
+    ) -> List[Tuple[str, Optional[float]]]:
+        """(predicted account, confidence) for each unknown-account posting.
 
-        Training examples are extracted per posting where postings carry
-        their own example metadata (e.g. the items of an Amazon shipment), but
-        such postings share one unknown account group, whose descriptions
-        `extract_unknown_account_group_features` merges into one input.
-        Groups with several such postings are therefore predicted per
-        posting instead, with the transaction-wide average blended in so that
-        ambiguous items lean towards their siblings.  Postings of such a group
-        without example metadata (tax, shipping, discounts) follow the largest
-        item.  Other groups are predicted as before.
+        Confidence is the predicted account's share of the neighbor vote, or
+        None if nothing was predicted.
         """
+        if self._has_unconfirmed_account(transaction):
+            # Postings with an unconfirmed account were already predicted
+            # (e.g. by smart_importer); keep those predictions.
+            predicted_account_names, _ = self._group_predicted_accounts_by_name(
+                transaction)
+            transaction.meta[UNCONFIRMED_ACCOUNT_KEY] = True
+            return [(account, None) for account in predicted_account_names]
+        if not self._use_nearest_neighbor:
+            group_inputs = self._feature_extractor.extract_unknown_account_group_features(
+                transaction)
+            group_predictions = [self.predict_account(item) for item in group_inputs]
+            group_numbers = training.get_unknown_account_group_numbers(transaction)
+            return [(group_predictions[group], None) for group in group_numbers]
         extractor = self._feature_extractor
         group_numbers = training.get_unknown_account_group_numbers(transaction)
         group_inputs = extractor.extract_unknown_account_group_features(
@@ -963,6 +958,12 @@ class LoadedReconciler(object):
         for i, group_number in enumerate(group_numbers):
             members[group_number].append(i)
 
+        # Groups with several postings that carry their own example metadata
+        # (e.g. the items of one Amazon shipment) are predicted per posting,
+        # which is how their training examples are extracted, rather than
+        # from all descriptions merged together.  The transaction-wide
+        # average is blended in so that ambiguous items lean towards their
+        # siblings.
         itemized = [
             i for indices in members.values()
             if sum(posting_inputs[i] is not None for i in indices) >= 2
@@ -989,21 +990,25 @@ class LoadedReconciler(object):
                 return ZERO
             return abs(units.number)
 
-        def best(scores: Dict[str, float]) -> str:
+        def best(scores: Dict[str, float]) -> Tuple[str, Optional[float]]:
             if not scores:
-                return FIXME_ACCOUNT
-            return max(scores, key=scores.__getitem__)
+                return FIXME_ACCOUNT, None
+            account = max(scores, key=scores.__getitem__)
+            return account, scores[account]
 
-        predictions = [FIXME_ACCOUNT] * len(group_numbers)
+        predictions = [(FIXME_ACCOUNT, None)] * len(
+            group_numbers)  # type: List[Tuple[str, Optional[float]]]
         for group_number, indices in members.items():
             items = [i for i in indices if i in scores]
             if not items:
-                predicted = self.predict_account(group_inputs[group_number])
+                predicted = best(
+                    self._predict_scores(group_inputs[group_number]))
                 for i in indices:
                     predictions[i] = predicted
                 continue
             for i in items:
                 predictions[i] = best(scores[i])
+            # Tax, shipping and discounts follow the largest item.
             largest = max(items, key=amount)
             for i in indices:
                 if i not in scores:
@@ -1014,7 +1019,9 @@ class LoadedReconciler(object):
                                            transaction: Transaction,
                                            used_transactions: List[Transaction],
                                            predicted_accounts: List[str],
-                                           changes: dict = {}):
+                                           changes: dict = {},
+                                           predicted_confidences: Optional[
+                                               List[Optional[float]]] = None):
         if self._pending_entry_originals:
             used_transactions = list(used_transactions)
             used_ids = {id(transaction) for transaction in used_transactions}
@@ -1045,16 +1052,20 @@ class LoadedReconciler(object):
         else:
             group_numbers = training.get_unknown_account_group_numbers(transaction)
             unknown_names = training.get_unknown_account_names(transaction)
+        confidences = (predicted_confidences if predicted_confidences
+                       is not None else [None] * len(predicted_accounts))
         substitutions = [
             AccountSubstitution(
                 unique_name=unique_id,
                 account_name=new_account,
                 group_number=group_number,
                 unknown_account_name=unknown_account,
-                predicted_account_name=predicted_account)
+                predicted_account_name=predicted_account,
+                prediction_confidence=confidence)
             for unique_id, new_account, group_number, unknown_account,
-            predicted_account in zip(unique_ids, new_accounts, group_numbers,
-                                     unknown_names, predicted_accounts)
+            predicted_account, confidence in zip(
+                unique_ids, new_accounts, group_numbers, unknown_names,
+                predicted_accounts, confidences)
         ]
 
         def substitute(changes: dict):
@@ -1062,7 +1073,8 @@ class LoadedReconciler(object):
                 transaction,
                 used_transactions,
                 changes=changes,
-                predicted_accounts=predicted_accounts)
+                predicted_accounts=predicted_accounts,
+                predicted_confidences=predicted_confidences)
 
         new_transaction = _replace_transaction_properties(transaction, changes)
         real_transaction = _get_transaction_with_substitutions(
@@ -1126,13 +1138,13 @@ class LoadedReconciler(object):
             for transaction, used_transactions in match_results:
                 if any(id(entry) in grouped_entry_ids for entry in used_transactions):
                     continue
-                predicted_accounts = self._get_unknown_account_predictions(
-                    transaction)
+                predictions = self._predict_unknown_accounts(transaction)
                 candidates.append(
                     self._make_candidate_with_substitutions(
                         transaction,
                         used_transactions,
-                        predicted_accounts=predicted_accounts))
+                        predicted_accounts=[a for a, _ in predictions],
+                        predicted_confidences=[c for _, c in predictions]))
             result = Candidates(
                 candidates=candidates,
                 date=next_entry.date,
