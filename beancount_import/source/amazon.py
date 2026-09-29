@@ -76,6 +76,17 @@ Even if you don't specify a `credit_card_last_4_digits` metadata field on the
 `open` directive, the generic automatic account prediction will likely handle
 them.
 
+Alternatively, specify `credit_card_account` in the source configuration to
+book every card payment on this Amazon account's invoices to one account,
+regardless of the card, e.g. a payable that the card charges later clear:
+
+    dict(module='beancount_import.source.amazon',
+         ...,
+         credit_card_account='Liabilities:Accounts-Payable:Amazon')
+
+This takes precedence over `credit_card_last_4_digits`, and keeps the invoice
+from being matched against the card transaction itself.
+
 Imported transaction format
 ===========================
 
@@ -309,7 +320,8 @@ def make_amazon_transaction(
         posttax_adjustment_accounts,
         credit_card_accounts,
         amazon_account: str,
-        payee='Amazon.com'
+        payee='Amazon.com',
+        credit_card_account: Optional[str] = None,
 ):
     all_items = []
     for shipment in invoice.shipments:
@@ -454,8 +466,8 @@ def make_amazon_transaction(
     for payment in invoice.credit_card_transactions:
         txn.postings.append(
             Posting(
-                account=credit_card_accounts.get(payment.card_ending_in,
-                                                 FIXME_ACCOUNT),
+                account=credit_card_account or credit_card_accounts.get(
+                    payment.card_ending_in, FIXME_ACCOUNT),
                 units=-payment.amount,
                 cost=None,
                 price=None,
@@ -597,10 +609,15 @@ class AmazonSource(Source):
                  pickle_dir: Optional[str] = None,
                  earliest_date: Optional[datetime.date] = None,
                  locale='en_US',
+                 credit_card_account: Optional[str] = None,
                  **kwargs) -> None:
         super().__init__(**kwargs)
         self.directory = directory
         self.amazon_account = amazon_account
+        # If set, every card payment on this account's invoices is booked here
+        # (e.g. a per-person payable cleared by the card charge), instead of the
+        # account whose `credit_card_last_4_digits` matches the card.
+        self.credit_card_account = credit_card_account
         self.posttax_adjustment_accounts = posttax_adjustment_accounts
         self.example_posting_key_extractors[ITEM_DESCRIPTION_KEY] = None
         self.example_posting_key_extractors[CREDIT_CARD_DESCRIPTION_KEY] = None
@@ -694,7 +711,8 @@ class AmazonSource(Source):
                 posttax_adjustment_accounts=self.posttax_adjustment_accounts,
                 amazon_account=self.amazon_account,
                 credit_card_accounts=credit_card_accounts,
-                payee=self.locale.payee)
+                payee=self.locale.payee,
+                credit_card_account=self.credit_card_account)
             results.add_pending_entry(
                 ImportResult(
                     date=transaction.date,

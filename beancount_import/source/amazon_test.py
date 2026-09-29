@@ -21,11 +21,18 @@ source_spec_with_posttax_accounts = {
     },
 }  # type: Dict[str, Any]
 
+source_spec_with_credit_card_account = {
+    **source_spec_with_posttax_accounts,
+    'credit_card_account': 'Liabilities:Accounts-Payable:Amazon',
+}  # type: Dict[str, Any]
+
 examples = [
     ('test_basic', source_spec_with_posttax_accounts),
     ('test_credit_card_transactions', source_spec_with_posttax_accounts),
     ('test_cleared_and_invalid', source_spec_with_posttax_accounts),
     ('test_prediction', source_spec_without_posttax_accounts),
+    # Overrides the credit_card_last_4_digits account in the journal.
+    ('test_credit_card_account', source_spec_with_credit_card_account),
 ]
 
 
