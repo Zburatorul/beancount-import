@@ -61,3 +61,24 @@ def test_refunds():
             },
         },
         replacements=[(refunds_testdata_dir, '<testdata>')])
+
+
+@pytest.mark.parametrize('credit_card_account,expected', [
+    ('Liabilities:Accounts-Payable:Amazon', 'Liabilities:Accounts-Payable:Amazon'),
+    (None, 'Expenses:FIXME'),
+])
+def test_unlisted_card_payment_goes_to_credit_card_account(credit_card_account, expected):
+    # Newer Amazon invoices only link to their card transactions, so the
+    # invoice lists none and the amount paid by card is left as a remainder.
+    from . import amazon, amazon_invoice
+    order = amazon_invoice.parse_invoice(
+        os.path.join(testdata_dir, '166-7926740-5141621.html'))
+    assert order.credit_card_transactions
+    order = order._replace(credit_card_transactions=[])
+    txn = amazon.make_amazon_transaction(
+        order, posttax_adjustment_accounts={}, credit_card_accounts={},
+        amazon_account='name@domain.com', credit_card_account=credit_card_account)
+    remainder = txn.postings[-1]
+    assert remainder.account == expected
+    assert -remainder.units.number == sum(
+        p.units.number for p in txn.postings[:-1])

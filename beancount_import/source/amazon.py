@@ -478,14 +478,16 @@ def make_amazon_transaction(
                      (payment.card_description, payment.card_ending_in)),
                 ]),
             ))
-    # If there is a balance remaining, add a FIXME transaction.
+    # If there is a balance remaining, it was paid by card without the invoice
+    # listing the charge (Amazon's newer invoice layout only links to them):
+    # book it to credit_card_account if configured, otherwise FIXME.
     inventory = SimpleInventory()
     for posting in txn.postings:
         inventory += posting.units
     for currency in inventory:
         txn.postings.append(
             Posting(
-                account=FIXME_ACCOUNT,
+                account=credit_card_account or FIXME_ACCOUNT,
                 units=Amount(currency=currency, number=-inventory[currency]),
                 cost=None,
                 price=None,
