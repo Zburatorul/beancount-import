@@ -250,6 +250,12 @@ class PaypalJsonSource(LinkBasedSource, Source):
         elif 'TRANSFER' in filter_set:
             is_credit = (txn_type == 'TRANSFER_FROM_BANK')
         # PAYMENT_SENT / PRE_APPROVED_PAYMENT → is_credit stays False
+        # The rendered amount carries the true direction; types the lists above
+        # don't know (e.g. MONEY_TRANSFER "Refund from PayPal") would otherwise
+        # default to a debit.
+        amount_classes = txn.get('amountInfo', {}).get('classNames', {})
+        if 'isCredit' in (amount_classes.get('transactionAmountClassName') or ''):
+            is_credit = True
 
         # ── Amount resolution ──────────────────────────────────────────────
         # Priority:
