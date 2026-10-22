@@ -157,7 +157,15 @@ def parse_iso_date(raw_date: str) -> datetime.date:
 
 
 class PaypalJsonSource(LinkBasedSource, Source):
-    """Source for PayPal JSON export files (new list format)."""
+    """Source for PayPal JSON export files (new list format).
+
+    Export files live in one directory, named paypal_transactions_<date>[_<owner>].json.
+    The owner is only a label: which source a transaction belongs to comes from the
+    custId inside it (the cust_id option).
+    """
+
+    # custIds of every configured source, to flag exports that belong to none.
+    known_cust_ids: set = set()
 
     def __init__(
         self,
@@ -175,6 +183,8 @@ class PaypalJsonSource(LinkBasedSource, Source):
         self.assets_account = assets_account
         self.fee_account = fee_account
         self.cust_id = cust_id
+        if cust_id:
+            self.known_cust_ids.add(cust_id)
         self.earliest_date = earliest_date
         self.transaction_meta_key = prefix + '_transaction_id'
 
@@ -385,6 +395,7 @@ class PaypalJsonSource(LinkBasedSource, Source):
         # Collect all transactions, keeping the most-detailed version per ID.
         # Later files (newer exports) override earlier ones so richer _details win.
         txn_data: Dict[str, tuple] = {}  # txn_id -> (txn, json_path)
+        warned_cust_ids: set = set()
 
         for json_file in json_files:
             json_path = os.path.join(self.directory, json_file)
@@ -399,6 +410,12 @@ class PaypalJsonSource(LinkBasedSource, Source):
                     continue
 
                 if self.cust_id and self._get_cust_id(txn) != self.cust_id:
+                    other = self._get_cust_id(txn)
+                    if other not in self.known_cust_ids and other not in warned_cust_ids:
+                        warned_cust_ids.add(other)
+                        self.log_status(
+                            f'paypal_json: WARNING {json_file} has custId {other}, '
+                            'which matches no configured PayPal source; ignoring')
                     continue
 
                 # Prefer entries with _details (complete fetch) over those without
