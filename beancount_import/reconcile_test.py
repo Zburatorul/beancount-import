@@ -453,3 +453,23 @@ def test_stage_missing_accounts_with_unspecified_currency(tmpdir, missing_curren
     assert opens['Expenses:Unspecified'].currencies == []
     assert all(entry.date == transaction.date for entry in opens.values())
     assert stage.get_missing_accounts() == []
+
+
+def test_without_classifier(tmpdir: py.path.local):
+    # build_classifier=False (rules-only imports) skips the classifier; the
+    # basic flow still works, with no account predictions.
+    tester = ReconcileGoldenTester(
+        golden_directory=os.path.join(testdata_root, 'reconcile', 'test_basic'),
+        temp_dir=str(tmpdir),
+        options=dict(
+            build_classifier=False,
+            data_sources=[{
+                'module': 'beancount_import.source.mint',
+                'filename': mint_data_path,
+            }],
+        ),
+    )
+    assert tester.loaded_reconciler.classifier is None
+    num_pending = tester.loaded_reconciler.num_pending
+    tester.accept_candidate(0)
+    assert tester.loaded_reconciler.num_pending < num_pending
