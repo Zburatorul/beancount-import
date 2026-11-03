@@ -20,14 +20,14 @@ from . import training
 from . import matching
 from . import journal_editor
 from .source import ImportResult, load_source, SourceResults, Source, LogFunction, AssociatedData, InvalidSourceReference, invalid_source_reference_sort_key, get_latest_valid_balance_dates
+
+if TYPE_CHECKING:
+    from . import classifier as nn_classifier
 from .posting_date import get_posting_date
 
 from .thread_helpers import call_in_new_thread
 
 from .matching import FIXME_ACCOUNT, is_unknown_account, CLEARED_KEY
-
-if TYPE_CHECKING:
-    from . import classifier as nn_classifier
 
 UNCONFIRMED_ACCOUNT_KEY = 'unconfirmed_account'
 NEW_ACCOUNT_KEY = 'new_account'
@@ -562,6 +562,7 @@ class LoadedReconciler(object):
         return self
 
     def _load_cached_encoder(self) -> Optional['nn_classifier.TripletEncoder']:
+        assert self.classifier is not None
         cache_path = self.reconciler.options['classifier_cache']
         if cache_path is None or not os.path.exists(cache_path):
             return None

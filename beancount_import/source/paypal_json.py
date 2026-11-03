@@ -515,6 +515,7 @@ class PaypalJsonSource(LinkBasedSource, Source):
             for key in set(disk_cache) - live:
                 del disk_cache[key]
             if set(disk_cache) != cached_keys:
+                assert self.cache_filename is not None
                 _write_disk_cache(self.cache_filename, disk_cache)
 
         all_txn_ids = set(txn_data.keys())
