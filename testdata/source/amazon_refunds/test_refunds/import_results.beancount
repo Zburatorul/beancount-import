@@ -1,0 +1,11 @@
+;; date: 2023-04-14
+;; info: {"filename": "<testdata>/refunds.csv", "type": "text/html"}
+
+; features: [
+;             null
+;           ]
+2023-04-14 * "Gift card claim (claim code ABCD-EFGHIJ-1A2B)"
+  amazon_account: "name@domain.com"
+  refund_id: "1A2B"
+  Expenses:FIXME            18.71 USD
+  Assets:Gift-Cards:Amazon

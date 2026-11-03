@@ -631,7 +631,7 @@ class AmazonSource(Source):
                     date = parse_date(row['Date'])
                     amount = self.locale.parse_amount(row['Amount'])
                     logger.debug("Refund: %s %s %s" % (row['Description'], date, amount))
-                    self.refunds.append([row['Date'], row['Description'], row['Amount']])
+                    self.refunds.append([date, row['Description'], amount])
 
     def _get_invoice(self, results: SourceResults, order_id: str, invoice_filename: str):
         if invoice_filename in self._cached_invoices:
@@ -701,6 +701,9 @@ class AmazonSource(Source):
                 ))
             
         for date, desc, amount in self.refunds:
+            # Gift card claim (claim code xxxx-xxxxxx-4RAR)
+            refund_id = desc.split("-")[-1][:-1]
+            if refund_id in refund_ids_seen: continue
             meta = collections.OrderedDict()
             meta[AMAZON_ACCOUNT_KEY] = self.amazon_account            
             refund_account = self.posttax_adjustment_accounts.get('gift_card', FIXME_ACCOUNT)
@@ -708,8 +711,7 @@ class AmazonSource(Source):
                 Posting(FIXME_ACCOUNT, amount, None, None, None, None),
                 Posting(refund_account, None, None, None, None, None)
             ]
-            # Gift card claim (claim code xxxx-xxxxxx-4RAR)
-            meta["refund_id"] = desc.split("-")[-1][:-1]
+            meta["refund_id"] = refund_id
             tnx = Transaction(
                 date = date,
                 meta = meta,

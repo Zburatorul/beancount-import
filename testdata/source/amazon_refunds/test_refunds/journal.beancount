@@ -1,0 +1,7 @@
+plugin "beancount.plugins.auto_accounts"
+
+2023-05-02 * "Gift card claim (claim code KLMN-OPQRST-3C4D)"
+  amazon_account: "name@domain.com"
+  refund_id: "3C4D"
+  Expenses:Refunds            5.00 USD
+  Assets:Gift-Cards:Amazon   -5.00 USD

@@ -35,3 +35,22 @@ def test_source(name: str, source_spec: SourceSpec):
         example_dir=os.path.join(testdata_dir, name),
         source_spec=source_spec,
         replacements=[(testdata_dir, '<testdata>')])
+
+
+refunds_testdata_dir = os.path.realpath(
+    os.path.join(testdata_dir, '..', 'amazon_refunds'))
+
+
+def test_refunds():
+    # Refunds from refunds.csv become pending gift card transactions, except
+    # those whose refund_id is already in the journal.
+    check_source_example(
+        example_dir=os.path.join(refunds_testdata_dir, 'test_refunds'),
+        source_spec={
+            **source_spec_without_posttax_accounts,
+            'directory': refunds_testdata_dir,
+            'posttax_adjustment_accounts': {
+                'gift_card': 'Assets:Gift-Cards:Amazon',
+            },
+        },
+        replacements=[(refunds_testdata_dir, '<testdata>')])
