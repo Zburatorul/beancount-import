@@ -275,7 +275,7 @@ are not accounted for in your journal.
 """
 
 import collections
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Any, Dict, List, Tuple, Optional, Union
 import os
 import sys
 import pickle
@@ -543,6 +543,16 @@ def get_refunds_seen(journal: JournalEditor,
         refund_ids.setdefault(refund_id, []).append(entry)
     return refund_ids
 
+class _ParseFailure:
+    """Pickled in place of an invoice that failed to parse."""
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+
+class _NoInvoice:
+    """Pickled in place of an invoice that parsed to None."""
+
+
 class AmazonPickler():
     def __init__( self, pickle_dir: Optional[str] ):
         self.pickle_dir = pickle_dir
@@ -603,6 +613,17 @@ class AmazonPickler():
             results.add_error('Failed to save pickled invoice %s: %s' % (
                         pickle_path, sys.exc_info()))
 
+    def save_outcome(self, invoice_path: str, outcome: Any) -> None:
+        """Pickles a failed or empty parse; skipped if it cannot be pickled
+        (e.g. an exception with unpicklable arguments)."""
+        if not self.pickle_dir: return
+        try:
+            data = pickle.dumps(outcome)
+        except Exception:
+            return
+        with open(self._build_pickle_path(self.pickle_dir, invoice_path), 'wb') as f:
+            f.write(data)
+
 class AmazonSource(Source):
     def __init__(self,
                  directory: str,
@@ -662,14 +683,33 @@ class AmazonSource(Source):
             return self._cached_invoices.get(invoice_filename)
         invoice_path = os.path.realpath(os.path.join(self.directory, invoice_filename))
 
-        invoice = self.pickler.load(results, invoice_path) # type: Optional[Order]
-        if invoice is None:
-            self.log_status('amazon: processing %s: %s' % (order_id, invoice_path, ))
-            invoice = parse_invoice(invoice_path, locale=self.locale)
-            self.pickler.dump( results, invoice_path, invoice )
+        invoice = self._load_or_parse_invoice(results, order_id, invoice_path)
 
         self._cached_invoices[invoice_filename] = invoice, invoice_path
         return invoice, invoice_path
+
+    def _load_or_parse_invoice(self, results: SourceResults, order_id: str,
+                               invoice_path: str) -> Optional[Order]:
+        """Parses the invoice, or replays the pickled outcome of an earlier
+        parse, including a failure or a None result."""
+        cached = self.pickler.load(results, invoice_path)
+        if isinstance(cached, _ParseFailure):
+            raise cached.exc
+        if isinstance(cached, _NoInvoice):
+            return None
+        if cached is not None:
+            return cached
+        self.log_status('amazon: processing %s: %s' % (order_id, invoice_path, ))
+        try:
+            invoice = parse_invoice(invoice_path, locale=self.locale)
+        except Exception as e:
+            self.pickler.save_outcome(invoice_path, _ParseFailure(e))
+            raise
+        if invoice is None:
+            self.pickler.save_outcome(invoice_path, _NoInvoice())
+        else:
+            self.pickler.dump(results, invoice_path, invoice)
+        return invoice
 
     def prepare(self, journal: JournalEditor, results: SourceResults):
         credit_card_accounts = get_credit_card_accounts(journal)

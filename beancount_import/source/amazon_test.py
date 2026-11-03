@@ -82,3 +82,35 @@ def test_unlisted_card_payment_goes_to_credit_card_account(credit_card_account, 
     assert remainder.account == expected
     assert -remainder.units.number == sum(
         p.units.number for p in txn.postings[:-1])
+
+
+def test_failed_parse_is_pickled(tmpdir, monkeypatch):
+    # An invoice that does not parse is not re-parsed while its pickled
+    # failure is newer than the invoice, and reports the same warning.
+    import types
+    from . import SourceResults
+    from . import amazon
+    directory = str(tmpdir.mkdir('invoices'))
+    pickle_dir = str(tmpdir.mkdir('pickles'))
+    with open(os.path.join(directory, '111-1111111-1111111.html'), 'w') as f:
+        f.write('<html><body>not an invoice</body></html>')
+
+    real_parse = amazon.parse_invoice
+    parses = []
+    monkeypatch.setattr(amazon, 'parse_invoice',
+                        lambda *a, **k: parses.append(a) or real_parse(*a, **k))
+    journal = types.SimpleNamespace(all_entries=[], accounts={})
+
+    def messages():
+        source = amazon.AmazonSource(directory=directory,
+                                     amazon_account='a@example.com',
+                                     pickle_dir=pickle_dir,
+                                     log_status=lambda m: None)
+        results = SourceResults()
+        source.prepare(journal, results)
+        return [(m[0], m[1].split(':')[0]) for m in results.messages]
+
+    first = messages()
+    assert first and len(parses) == 1
+    assert messages() == first
+    assert len(parses) == 1
