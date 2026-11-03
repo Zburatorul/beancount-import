@@ -67,6 +67,12 @@ Specifying the source to beancount_import
 Multiple sources can be configured for different accounts by using different
 `cust_id` values.
 
+All sources in a process share the parsed exports, so configuring several
+accounts on one directory reads each file once.  To skip parsing in later
+runs too, pass the same `cache_filename` to each source; it keeps only the
+fields this source uses (a few KB per transaction instead of the full
+`_details`) and is refreshed when exports are added, changed or removed.
+
 Imported transaction format
 ===========================
 
@@ -101,7 +107,9 @@ import datetime
 import html
 import json
 import os
+import pickle
 import re
+import threading
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -114,6 +122,78 @@ from ..matching import FIXME_ACCOUNT
 from ..posting_date import POSTING_DATE_KEY
 from . import AssociatedData, ImportResult, Source, SourceResults
 from .link_based_source import LinkBasedSource
+
+
+# Only these parts of a transaction's `_details` are used.  The full
+# `_details` is most of an export's size (hundreds of KB per transaction).
+_DETAILS_KEYS_USED = ('fundingSource', 'amount')
+
+_CACHE_VERSION = 1
+
+# Parsed exports shared by all PaypalJsonSource instances in this process
+# (one per configured account), keyed by (path, mtime_ns, size).
+_parsed_exports: Dict[tuple, List[Dict[str, Any]]] = {}
+_parsed_exports_lock = threading.Lock()
+
+
+def _slim_transaction(txn: Dict[str, Any]) -> Dict[str, Any]:
+    details = txn.get('_details')
+    if not isinstance(details, dict):
+        return txn
+    txn = dict(txn)
+    txn['_details'] = {k: details[k] for k in _DETAILS_KEYS_USED if k in details}
+    return txn
+
+
+def _file_key(json_path: str) -> tuple:
+    st = os.stat(json_path)
+    return (os.path.realpath(json_path), st.st_mtime_ns, st.st_size)
+
+
+def load_export_transactions(json_path: str,
+                             disk_cache: Optional[Dict[tuple, Any]] = None
+                             ) -> List[Dict[str, Any]]:
+    """Returns the `transactions` of an export, without unused `_details`.
+
+    Each file is parsed at most once per process.  `disk_cache`, if given,
+    is consulted and updated as well.  Files are identified by path, mtime
+    and size, so an export rewritten in place with the same size within the
+    filesystem's timestamp resolution would not be re-read; exports are
+    expected to be written once, under a new name.
+    """
+    key = _file_key(json_path)
+    with _parsed_exports_lock:
+        txns = _parsed_exports.get(key)
+        if txns is None and disk_cache is not None:
+            txns = disk_cache.get(key)
+        if txns is None:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            txns = [_slim_transaction(t) for t in data.get('transactions', [])]
+        _parsed_exports[key] = txns
+        if disk_cache is not None:
+            disk_cache[key] = txns
+        return txns
+
+
+def _read_disk_cache(cache_filename: str) -> Dict[tuple, Any]:
+    try:
+        with open(cache_filename, 'rb') as f:
+            data = pickle.load(f)
+        if data.get('version') == _CACHE_VERSION:
+            return data['files']
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print('paypal_json: ignoring unreadable cache %s: %s' % (cache_filename, e))
+    return {}
+
+
+def _write_disk_cache(cache_filename: str, files: Dict[tuple, Any]) -> None:
+    tmp = cache_filename + '.tmp'
+    with open(tmp, 'wb') as f:
+        pickle.dump({'version': _CACHE_VERSION, 'files': files}, f)
+    os.replace(tmp, cache_filename)
 
 
 def parse_amount(amount_text: str) -> tuple[Decimal | None, str | None]:
@@ -175,6 +255,7 @@ class PaypalJsonSource(LinkBasedSource, Source):
         prefix: str,
         cust_id: Optional[str] = None,
         earliest_date: Optional[datetime.date] = None,
+        cache_filename: Optional[str] = None,
         **kwargs
     ) -> None:
         super().__init__(link_prefix=prefix + '.', **kwargs)
@@ -186,6 +267,7 @@ class PaypalJsonSource(LinkBasedSource, Source):
         if cust_id:
             self.known_cust_ids.add(cust_id)
         self.earliest_date = earliest_date
+        self.cache_filename = cache_filename
         self.transaction_meta_key = prefix + '_transaction_id'
 
         # Register metadata keys for ML predictor training
@@ -397,14 +479,16 @@ class PaypalJsonSource(LinkBasedSource, Source):
         txn_data: Dict[str, tuple] = {}  # txn_id -> (txn, json_path)
         warned_cust_ids: set = set()
 
+        disk_cache = None
+        if self.cache_filename is not None:
+            disk_cache = _read_disk_cache(self.cache_filename)
+            cached_keys = set(disk_cache)
+
         for json_file in json_files:
             json_path = os.path.join(self.directory, json_file)
             self.log_status(f'paypal_json: loading {json_file}')
 
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            for txn in data.get('transactions', []):
+            for txn in load_export_transactions(json_path, disk_cache):
                 txn_id = txn.get('id')
                 if not txn_id:
                     continue
@@ -424,6 +508,14 @@ class PaypalJsonSource(LinkBasedSource, Source):
                     txn_data[txn_id] = (txn, json_path)
                 elif '_detailError' in existing[0] and '_detailError' not in txn:
                     txn_data[txn_id] = (txn, json_path)
+
+        if disk_cache is not None:
+            # Drop entries for exports that were removed or changed.
+            live = {_file_key(os.path.join(self.directory, f)) for f in json_files}
+            for key in set(disk_cache) - live:
+                del disk_cache[key]
+            if set(disk_cache) != cached_keys:
+                _write_disk_cache(self.cache_filename, disk_cache)
 
         all_txn_ids = set(txn_data.keys())
 
