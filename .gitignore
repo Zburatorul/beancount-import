@@ -13,3 +13,11 @@ htmlcov/
 .idea/
 .tbd
 .claude
+
+# Personal importer inputs and local development state.
+/my_data/
+/scripts/.classifier_cache
+/scripts/bc-det-import-run.py
+/scripts/fix_amazon_payables.py
+/scripts/fix_sapphire_transfers.py
+/.private-import-history/
