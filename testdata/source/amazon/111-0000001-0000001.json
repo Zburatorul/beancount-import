@@ -36,7 +36,7 @@
             "posttax_adjustments": [],
             "tax": [
                 {
-                    "description": "Estimated tax to be collected",
+                    "description": "Sales Tax",
                     "amount": {
                         "number": "2.07",
                         "currency": "USD"
@@ -50,17 +50,7 @@
             "errors": []
         }
     ],
-    "credit_card_transactions": [
-        {
-            "date": "2025-03-15",
-            "card_description": "Prime Visa",
-            "card_ending_in": "0000",
-            "amount": {
-                "number": "25.07",
-                "currency": "USD"
-            }
-        }
-    ],
+    "credit_card_transactions": [],
     "pretax_adjustments": [
         {
             "description": "Shipping & Handling",

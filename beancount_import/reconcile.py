@@ -29,8 +29,6 @@ from .matching import FIXME_ACCOUNT, is_unknown_account, CLEARED_KEY
 if TYPE_CHECKING:
     from . import classifier as nn_classifier
 
-UNCONFIRMED_ACCOUNT_KEY = 'unconfirmed_account'
-NEW_ACCOUNT_KEY = 'new_account'
 display_prediction_explanation = False
 
 classifier_cache_version_number = 1
@@ -193,7 +191,7 @@ def get_prediction_explanation(classifier, features: Dict[str, bool]):
 AccountSubstitution = collections.namedtuple('AccountSubstitution', [
     'unique_name', 'account_name', 'group_number', 'unknown_account_name',
     'predicted_account_name', 'prediction_confidence'
-])
+], defaults=[None])
 
 
 class Candidate(object):
@@ -562,7 +560,6 @@ class LoadedReconciler(object):
         return self
 
     def _load_cached_encoder(self) -> Optional['nn_classifier.TripletEncoder']:
-        assert self.classifier is not None
         cache_path = self.reconciler.options['classifier_cache']
         if cache_path is None or not os.path.exists(cache_path):
             return None
@@ -897,56 +894,19 @@ class LoadedReconciler(object):
                 return -source_posting.units.number
         return None
 
-    def _get_unknown_account_names(self, transaction: Transaction):
-        return [posting.account for posting in transaction.postings if posting.meta is not None and NEW_ACCOUNT_KEY in posting.meta]
-
-    def _has_unconfirmed_account(self, transaction: Transaction) -> bool:
-        return any((posting.meta is not None and UNCONFIRMED_ACCOUNT_KEY in posting.meta)
-                for posting in transaction.postings)
-
-    def _group_predicted_accounts_by_name(self, transaction: Transaction):
-        '''
-            Takes a list of postings with candidate account names,
-            and groups them into groups that should share the same exact account.
-            Expects each predicted posting to have an UNCONFIRMED_ACCOUNT_KEY meta field.
-        '''
-        num_groups = 0
-        group_numbers = []
-        predicted_account_names = []
-        existing_groups = {}  # type: Dict[str, int]
-        for posting in transaction.postings:
-            if posting.meta is None or UNCONFIRMED_ACCOUNT_KEY not in posting.meta:
-                continue
-            group_number = existing_groups.setdefault(posting.account,
-                                                        num_groups)
-            predicted_account_names.append(posting.account)
-            if group_number == num_groups:
-                num_groups += 1
-            group_numbers.append(group_number)
-        return predicted_account_names, group_numbers
-
     def _get_unknown_account_predictions(self,
                                          transaction: Transaction) -> List[str]:
-        return [
-            account for account, _ in
-            self._predict_unknown_accounts(transaction)
-        ]
+        return [account for account, _ in self._predict_unknown_accounts(transaction)]
 
     def _predict_unknown_accounts(
             self, transaction: Transaction
     ) -> List[Tuple[str, Optional[float]]]:
-        """(predicted account, confidence) for each unknown-account posting.
+        """Return each unknown posting's account and optional NN vote share.
 
-        Confidence is the predicted account's share of the neighbor vote, or
-        None if nothing was predicted.
+        Confidence follows the final per-item scores, including smoothing;
+        non-item adjustments inherit the largest item's prediction and score.
+        The decision-tree path has no nearest-neighbor confidence score.
         """
-        if self._has_unconfirmed_account(transaction):
-            # Postings with an unconfirmed account were already predicted
-            # (e.g. by smart_importer); keep those predictions.
-            predicted_account_names, _ = self._group_predicted_accounts_by_name(
-                transaction)
-            transaction.meta[UNCONFIRMED_ACCOUNT_KEY] = True
-            return [(account, None) for account in predicted_account_names]
         if not self._use_nearest_neighbor:
             group_inputs = self._feature_extractor.extract_unknown_account_group_features(
                 transaction)
@@ -965,12 +925,6 @@ class LoadedReconciler(object):
         for i, group_number in enumerate(group_numbers):
             members[group_number].append(i)
 
-        # Groups with several postings that carry their own example metadata
-        # (e.g. the items of one Amazon shipment) are predicted per posting,
-        # which is how their training examples are extracted, rather than
-        # from all descriptions merged together.  The transaction-wide
-        # average is blended in so that ambiguous items lean towards their
-        # siblings.
         itemized = [
             i for indices in members.values()
             if sum(posting_inputs[i] is not None for i in indices) >= 2
@@ -1008,14 +962,12 @@ class LoadedReconciler(object):
         for group_number, indices in members.items():
             items = [i for i in indices if i in scores]
             if not items:
-                predicted = best(
-                    self._predict_scores(group_inputs[group_number]))
+                predicted = best(self._predict_scores(group_inputs[group_number]))
                 for i in indices:
                     predictions[i] = predicted
                 continue
             for i in items:
                 predictions[i] = best(scores[i])
-            # Tax, shipping and discounts follow the largest item.
             largest = max(items, key=amount)
             for i in indices:
                 if i not in scores:
@@ -1053,14 +1005,11 @@ class LoadedReconciler(object):
             unique_id: account
             for unique_id, account in zip(unique_ids, new_accounts)
         }
-        if transaction.meta is not None and UNCONFIRMED_ACCOUNT_KEY in transaction.meta:
-            _, group_numbers = self._group_predicted_accounts_by_name(transaction)
-            unknown_names = self._get_unknown_account_names(transaction)
-        else:
-            group_numbers = training.get_unknown_account_group_numbers(transaction)
-            unknown_names = training.get_unknown_account_names(transaction)
-        confidences = (predicted_confidences if predicted_confidences
-                       is not None else [None] * len(predicted_accounts))
+        group_numbers = training.get_unknown_account_group_numbers(transaction)
+        unknown_names = training.get_unknown_account_names(transaction)
+        confidences = (predicted_confidences if predicted_confidences is not None
+                       else [None] * len(predicted_accounts))
+        assert len(confidences) == len(predicted_accounts)
         substitutions = [
             AccountSubstitution(
                 unique_name=unique_id,
@@ -1150,8 +1099,8 @@ class LoadedReconciler(object):
                     self._make_candidate_with_substitutions(
                         transaction,
                         used_transactions,
-                        predicted_accounts=[a for a, _ in predictions],
-                        predicted_confidences=[c for _, c in predictions]))
+                        predicted_accounts=[account for account, _ in predictions],
+                        predicted_confidences=[score for _, score in predictions]))
             result = Candidates(
                 candidates=candidates,
                 date=next_entry.date,

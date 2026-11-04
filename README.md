@@ -159,6 +159,12 @@ imports using your own rules before account classification. See the
 the helper API, and callback lifecycle. Entries left pending continue through
 the normal web review flow.
 
+For rules-only callers, set `build_classifier=False` in the launch configuration
+(or the reconciler options). Source loading, matching, and preprocessing still
+run, while classifier training, indexing, and cache loading are skipped.
+Remaining unknown accounts stay `Expenses:FIXME`. Classification stays enabled
+by default.
+
 ## Errors
 
 Any errors either from Beancount itself or one of the data sources are shown in
@@ -226,6 +232,13 @@ Two classifiers are available for predicting unknown accounts:
    differently over time.  With `classifier_cache` set, it caches a small
    learned model, retrained automatically when it is over 30 days old or the
    journal has grown by more than 5%.
+
+With `nearest_neighbor`, account predictions below a 70% vote share have a
+dashed amber outline and a percentage badge. Hover over a prediction to see
+its vote share. This score describes the weighted neighbor vote, including
+item smoothing; it is not a probability that the account is correct. The
+indicator disappears when you change the predicted account. The default
+decision tree does not display these scores or indicators.
 
 To use `nearest_neighbor`, pass it to `beancount_import.webserver.main` in your
 script:

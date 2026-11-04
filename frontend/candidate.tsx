@@ -45,10 +45,6 @@ const AccountSubstitutionBackground = styled.div<{ groupNumber: number }>`
     groupBackgroundColors[p.groupNumber % groupBackgroundColors.length]};
 `;
 
-// Predictions whose confidence (share of the classifier's vote) is below this
-// are outlined, so they stand out for review.  In a replay of a year of
-// imports, flagging below 0.7 marked 13% of predictions and caught 48% of the
-// wrong ones.
 const LOW_CONFIDENCE = 0.7;
 
 const AccountSubstitutionElement = styled.div<{
@@ -59,12 +55,20 @@ const AccountSubstitutionElement = styled.div<{
   position: relative;
   cursor: pointer;
   border: 1px ${p => (p.lowConfidence && !p.active ? "dashed" : "solid")}
-    ${p =>
-      p.active ? "black" : p.lowConfidence ? "#d97706" : "transparent"};
+    ${p => p.active ? "black" : p.lowConfidence ? "var(--color-low-confidence-border)" : "transparent"};
 
   :hover {
     text-decoration: underline;
   }
+`;
+
+const PredictionConfidenceElement = styled.span`
+  margin-left: 0.5em;
+  padding: 0 0.25em;
+  border-radius: 3px;
+  background: var(--color-low-confidence-bg);
+  color: var(--color-low-confidence-text);
+  font-size: 0.85em;
 `;
 
 const AccountSubstitutionIndicatorElement = styled.div`
@@ -235,12 +239,7 @@ export class CandidateComponent extends React.PureComponent<
         let start = 0;
         let fieldNumber = 0;
         for (const [
-          uniqueName,
-          accountName,
-          groupNumber,
-          ,
-          predictedAccountName,
-          confidence
+          uniqueName, accountName, groupNumber, , predictedAccountName, confidence
         ] of substituted) {
           const i = line.indexOf(uniqueName);
           if (i === -1) {
@@ -256,14 +255,14 @@ export class CandidateComponent extends React.PureComponent<
           addText(line.substring(0, i));
           const groupBackgroundColor =
             groupBackgroundColors[groupNumber % groupBackgroundColors.length];
-          const lowConfidence =
-            confidence != null &&
-            confidence < LOW_CONFIDENCE &&
-            accountName === predictedAccountName;
-          const confidenceNote = lowConfidence
-            ? `Low-confidence prediction (${Math.round(
-                confidence! * 100
-              )}% of similar past postings).  `
+          const hasConfidence =
+            accountName === predictedAccountName &&
+            typeof confidence === "number" &&
+            Number.isFinite(confidence) && confidence >= 0 && confidence <= 1;
+          const lowConfidence = hasConfidence && confidence! < LOW_CONFIDENCE;
+          const percentage = hasConfidence ? Math.round(confidence! * 100) : null;
+          const confidenceNote = hasConfidence
+            ? `${lowConfidence ? "Low-confidence prediction. " : ""}Nearest-neighbor weighted vote share: ${percentage}% (not a probability of correctness).  `
             : "";
           addElement(
             <AccountSubstitutionElement
@@ -284,6 +283,9 @@ export class CandidateComponent extends React.PureComponent<
                 {"" + (groupNumber + 1)}
               </AccountSubstitutionIndicatorElement>
               {accountName}
+              {lowConfidence && (
+                <PredictionConfidenceElement>{percentage}%</PredictionConfidenceElement>
+              )}
             </AccountSubstitutionElement>
           );
           start = i + uniqueName.length;

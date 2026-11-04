@@ -459,20 +459,19 @@
 ;                 ]
 ;               },
 ;               "source_account": ""
-;             }
+;             },
+;             null
 ;           ]
 2025-03-15 * "Amazon.com" "Example Brand Liquid Hand Soap..."
   amazon_account: "name@domain.com"
   amazon_order_id: "111-0000001-0000001"
   associated_data0: "{\"description\": \"Amazon order invoice\", \"meta\": [\"amazon_order_id\", \"111-0000001-0000001\"], \"path\": \"<testdata>/111-0000001-0000001.html\", \"type\": \"text/html\"}"
-  Expenses:FIXME:A                      20.50 USD
+  Expenses:FIXME:A   20.50 USD
     amazon_item_description: "Example Brand Liquid Hand Soap Refill, Unscented, 32 fl oz"
     amazon_item_quantity: 2
     amazon_seller: "Amazon.com"
-  Expenses:FIXME:A                       2.50 USD
+  Expenses:FIXME:A    2.50 USD
     amazon_invoice_description: "Shipping & Handling"
-  Expenses:FIXME:A                       2.07 USD
-    amazon_invoice_description: "Estimated tax to be collected"
-  Liabilities:Accounts-Payable:Amazon  -25.07 USD
-    amazon_credit_card_description: "Prime Visa ending in 0000"
-    transaction_date: 2025-03-15
+  Expenses:FIXME:A    2.07 USD
+    amazon_invoice_description: "Sales Tax"
+  Expenses:FIXME    -25.07 USD

@@ -244,17 +244,44 @@ def test_basic(tmpdir: py.path.local):
         ),
     )
 
-    assert not tester.loaded_reconciler._use_nearest_neighbor
-    assert tester.next_candidates is not None
-    assert all(sub.prediction_confidence is None
-               for candidate in tester.next_candidates.candidates
-               for sub in candidate.substituted_accounts or [])
     tester.accept_candidate(0)
     tester.snapshot()
     tester.change_candidate(0, dict(accounts=['Expenses:Coffee'], ))
     tester.accept_candidate(0)
     tester.snapshot()
 
+
+def test_decision_tree_predictions_are_independent_of_global_random_seed():
+    import datetime
+    from types import SimpleNamespace
+
+    import numpy as np
+    from beancount.core.amount import Amount
+
+    def example(a, b):
+        return training.PredictionInput(
+            source_account='Assets:Checking', amount=Amount.from_string('10 USD'),
+            date=datetime.date(2020, 1, 1), key_value_pairs={'a': a, 'b': b})
+
+    loaded = reconcile.LoadedReconciler.__new__(reconcile.LoadedReconciler)
+    loaded.reconciler = SimpleNamespace(
+        options={'classifier_cache': None}, log_status=lambda message: None)
+    loaded._use_nearest_neighbor = False
+    loaded.training_examples = training.TrainingExamples()
+    loaded.training_examples.add(example('one', 'one'), 'Expenses:Groceries')
+    loaded.training_examples.add(example('zero', 'zero'), 'Expenses:Dining')
+    # Both features fit training equally well, but disagree on this query.
+    query = example('one', 'zero')
+    previous_state = np.random.get_state()
+    predictions = set()
+    try:
+        for seed in range(32):
+            np.random.seed(seed)
+            loaded._maybe_train_classifier()
+            predictions.add(loaded.predict_account(query))
+    finally:
+        np.random.set_state(previous_state)
+    assert len(predictions) == 1
 
 def test_basic_nearest_neighbor(tmpdir: py.path.local):
     cache_path = str(tmpdir.join('classifier_cache'))
@@ -462,23 +489,72 @@ def test_stage_missing_accounts_with_unspecified_currency(tmpdir, missing_curren
 
 @pytest.mark.parametrize('classifier', reconcile.CLASSIFIERS)
 def test_without_classifier(tmpdir: py.path.local, classifier: str):
-    # build_classifier=False (rules-only imports) skips the classifier; the
-    # basic flow still works, with no account predictions.
     tester = ReconcileGoldenTester(
         golden_directory=os.path.join(testdata_root, 'reconcile', 'test_basic'),
         temp_dir=str(tmpdir),
         options=dict(
-            build_classifier=False,
-            classifier=classifier,
-            data_sources=[{
-                'module': 'beancount_import.source.mint',
-                'filename': mint_data_path,
-            }],
+            classifier=classifier, build_classifier=False,
+            data_sources=[dict(module='beancount_import.source.mint',
+                               filename=mint_data_path)],
         ),
     )
+    loaded = tester.loaded_reconciler
+    assert loaded.classifier is None
+    assert loaded.training_examples.training_examples == []
+    assert loaded.retrain() is loaded
+    num_pending = loaded.num_pending
+    tester.accept_candidate(0)
+    assert loaded.num_pending < num_pending
+    assert loaded.training_examples.training_examples == []
+    tester.reconciler.reload_journal()
     assert tester.loaded_reconciler.classifier is None
     assert tester.loaded_reconciler.training_examples.training_examples == []
-    assert tester.loaded_reconciler.retrain() is tester.loaded_reconciler
-    num_pending = tester.loaded_reconciler.num_pending
-    tester.accept_candidate(0)
-    assert tester.loaded_reconciler.num_pending < num_pending
+
+
+
+@pytest.mark.parametrize('classifier', reconcile.CLASSIFIERS)
+def test_candidate_confidence_survives_account_edits(tmpdir, classifier, monkeypatch):
+    from . import webserver
+
+    directory = ('test_basic_nearest_neighbor' if classifier == 'nearest_neighbor'
+                 else 'test_basic')
+    tester = ReconcileGoldenTester(
+        golden_directory=os.path.join(testdata_root, 'reconcile', directory),
+        temp_dir=str(tmpdir),
+        options=dict(classifier=classifier, data_sources=[
+            dict(module='beancount_import.source.mint', filename=mint_data_path)]))
+    loaded = tester.loaded_reconciler
+    if classifier == 'decision_tree':
+        def unexpected_scores(*args):
+            raise AssertionError('Decision trees must not request nearest-neighbor scores')
+        monkeypatch.setattr(loaded, '_predict_scores', unexpected_scores)
+    else:
+        monkeypatch.setattr(loaded, '_predict_scores', lambda _: {
+            'Expenses:Office': 0.62, 'Expenses:Household': 0.38})
+    candidate = next(
+        candidate for pending in loaded.pending_data
+        for candidate in loaded._make_candidates_from_import_result(pending).candidates
+        if candidate.substituted_accounts)
+    substitutions = candidate.substituted_accounts
+    assert substitutions
+    confidences = [entry.prediction_confidence for entry in substitutions]
+    if classifier == 'decision_tree':
+        assert all(score is None for score in confidences)
+    else:
+        assert confidences == [0.62] * len(substitutions)
+    encoded = webserver.json_encode_candidate(candidate)
+    serialized = json.loads(json.dumps(encoded['substituted_accounts']))
+    assert [row[5] for row in serialized] == confidences
+
+    edited = candidate.substitute(dict(accounts=['Expenses:Edited'] * len(substitutions)))
+    assert [entry.account_name for entry in edited.substituted_accounts] == [
+        'Expenses:Edited'] * len(substitutions)
+    assert [entry.predicted_account_name for entry in edited.substituted_accounts] == [
+        entry.predicted_account_name for entry in substitutions]
+    assert [entry.prediction_confidence for entry in edited.substituted_accounts] == confidences
+
+
+def test_account_substitution_accepts_older_constructor():
+    entry = reconcile.AccountSubstitution('unique', 'Expenses:Office', 0,
+                                          'Expenses:FIXME', 'Expenses:Office')
+    assert entry.prediction_confidence is None

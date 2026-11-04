@@ -592,7 +592,7 @@ export class CandidatesComponent extends React.PureComponent<
         this.fixme();
         break;
       case "x":
-        this.clearAllAccounts();
+        this.fixme();
         break;
       case "d":
         this.deselectAllUsedTransactions();

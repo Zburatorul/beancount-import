@@ -759,7 +759,9 @@ def parse_credit_card_transactions_from_payments_table(
     return credit_card_transactions
 
 
-def parse_credit_card_transactions(soup, locale=Locale_en_US) -> List[CreditCardTransaction]:
+def parse_credit_card_transactions(
+        soup, locale=Locale_en_US, require_full_date: bool = False
+) -> List[CreditCardTransaction]:
     """ Parse Credit Card Transactions from bottom sub-table of payments table.
     Transactions are listed with type, 4 digits, transaction date and amount.
     """
@@ -782,6 +784,8 @@ def parse_credit_card_transactions(soup, locale=Locale_en_US) -> List[CreditCard
         m = re.match(locale.credit_card_last_digits, description,
                     re.UNICODE)
         assert m is not None
+        if require_full_date and re.fullmatch(r'[A-Za-z]+ \d{1,2}, \d{4}', m.group(3)) is None:
+            raise ValueError('Invalid card transaction date: %r' % m.group(3))
         transactions.append(
             CreditCardTransaction(
                 date=locale.parse_date(m.group(3)),
@@ -801,10 +805,8 @@ def parse_invoice(path: str, locale=Locale_en_US) -> Optional[Order]:
     logger.debug('identified as regular invoice')
     order = parse_regular_order_invoice(path, locale=locale)
     receipt_path = get_wfm_receipt_path(path)
-    if order is not None and os.path.exists(receipt_path):
-        logger.debug('applying Whole Foods receipt %s', receipt_path)
-        order = apply_wfm_receipt(
-            order, parse_wfm_receipt(receipt_path, locale=locale))
+    if os.path.exists(receipt_path):
+        order = apply_wfm_receipt(order, parse_wfm_receipt(receipt_path, locale=locale))
     return order
 
 
@@ -817,13 +819,9 @@ def parse_regular_order_invoice(path: str, locale=Locale_en_US) -> Order:
     errors = []  # type: Errors
     with open(path, 'rb') as f:
         soup: BeautifulSoup = bs4.BeautifulSoup(f.read(), 'lxml')
-    
-    # -----------------
-    # Check for new style invoice
-    # -----------------
-    if soup.find(attrs={"data-component": "orderSummary"}):
-        logger.debug('identified as new style invoice')
-        return parse_new_style_invoice(soup, locale)
+
+    if locale.LOCALE == 'en_US' and soup.find(attrs={'data-component': 'orderId'}):
+        return parse_new_style_invoice(soup, locale=locale)
 
     # -----------------
     # Order ID & Order placed date
@@ -1019,7 +1017,7 @@ def parse_regular_order_invoice(path: str, locale=Locale_en_US) -> Order:
                       (total_payments, adjusted_grand_total))
 
     logger.debug('...finished parsing regular invoice.')
-    order = Order(
+    return Order(
         order_date=order_date,
         order_id=order_id,
         shipments=shipments,
@@ -1028,19 +1026,120 @@ def parse_regular_order_invoice(path: str, locale=Locale_en_US) -> Order:
         errors=sum((shipment.errors
                     for shipment in shipments), cast(Errors, [])) + errors,
         **output_fields)
-    return order
 
 
-# ---------------------------------------------------------------------------
-# Whole Foods Market receipts
-#
-# The print-invoice page that finance-dl saves for a Whole Foods Market order
-# lists only item list prices: its tax is $0.00 and it omits promotions, so its
-# grand total does not match what the card was charged.  The order-details page
-# (https://www.amazon.com/fopo/order-details?orderID=...) has a "Purchase
-# Summary" with the real savings, tax and amount charged.  finance-dl stores
-# that page as <directory>/wfm/<order-id>.html next to the invoice.
-# ---------------------------------------------------------------------------
+def parse_new_style_invoice(soup: BeautifulSoup, locale=Locale_en_US) -> Order:
+    """Parse the component-based US order-details layout.
+
+    The page gives order-wide amounts rather than per-shipment amounts, so
+    represent its items in one shipment without inventing a shipment date.
+    """
+    def component(parent, name: str) -> Tag:
+        return require_find(parent, attrs={'data-component': name})
+
+    order_id_text = component(soup, 'orderId').get_text(' ', strip=True)
+    match = re.fullmatch(r'\d{3}-\d{7}-\d{7}', order_id_text)
+    if match is None:
+        raise ValueError('Invalid order ID: %r' % order_id_text)
+    order_id = match.group()
+    date_text = component(soup, 'orderDate').get_text(' ', strip=True)
+    if re.fullmatch(r'[A-Za-z]+ \d{1,2}, \d{4}', date_text) is None:
+        raise ValueError('Invalid order date: %r' % date_text)
+    order_date = locale.parse_date(date_text)
+
+    items = []  # type: List[Union[Item, DigitalItem]]
+    for container in soup.find_all(attrs={'data-component': 'purchasedItemsRightGrid'}):
+        description = component(container, 'itemTitle').get_text(' ', strip=True)
+        if not description:
+            raise ValueError('Missing item description')
+        price_node = component(container, 'unitPrice')
+        # Amazon repeats prices for screen readers and visual presentation.
+        price_node = price_node.find(class_='a-offscreen') or price_node
+        price_text = price_node.get_text(' ', strip=True)
+        if not price_text:
+            raise ValueError('Missing item price')
+        price = locale.parse_amount(price_text)
+
+        quantity_node = container.find(attrs={'data-component': 'quantity'})
+        quantity_text = quantity_node.get_text(' ', strip=True) if quantity_node else ''
+        if not quantity_text:
+            left_grid = require_find_parent(container, 'div').find(
+                attrs={'data-component': 'purchasedItemsLeftGrid'})
+            quantity_node = left_grid.find(class_='od-item-view-qty') if left_grid else None
+            quantity_text = quantity_node.get_text(' ', strip=True) if quantity_node else ''
+        quantity = D(re.sub(r'^Qty:\s*', '', quantity_text)) if quantity_text else D(1)
+        if not quantity.is_finite() or quantity <= ZERO:
+            raise ValueError('Invalid item quantity: %r' % quantity_text)
+        seller = container.find(attrs={'data-component': 'orderedMerchant'})
+        condition = container.find(attrs={'data-component': 'itemCondition'})
+        items.append(Item(
+            quantity=quantity, description=description, price=price,
+            sold_by=re.sub(r'^Sold by:\s*', '', seller.get_text(' ', strip=True))
+            if seller else None,
+            condition=(condition.get_text(' ', strip=True) or None) if condition else None))
+    if not items:
+        raise ValueError('No items found in component-based order details')
+
+    summary = component(soup, 'orderSummary')
+    rows = []  # type: List[Tuple[str, Amount]]
+    for row in summary.find_all(class_='od-line-item-row'):
+        label = require_find(row, class_='od-line-item-row-label').get_text(' ', strip=True)
+        value = require_find(row, class_='od-line-item-row-content')
+        value = value.find(class_='a-offscreen') or value
+        rows.append((label, locale.parse_amount(value.get_text(' ', strip=True))))
+
+    def summary_amount(pattern: str, required: bool = True) -> Optional[Amount]:
+        amounts = [amount for label, amount in rows
+                   if re.fullmatch(pattern, label, re.IGNORECASE)]
+        if len(amounts) != 1:
+            if required or amounts:
+                raise ValueError('Expected one summary field matching %r' % pattern)
+            return None
+        return amounts[0]
+
+    def adjustments(pattern: str) -> List[Adjustment]:
+        return [Adjustment(label.rstrip(':').strip(), amount)
+                for label, amount in rows if re.fullmatch(pattern, label, re.IGNORECASE)]
+
+    subtotal = summary_amount(locale.items_subtotal)
+    grand_total = summary_amount(locale.regular_total_order)
+    assert subtotal is not None and grand_total is not None
+    pretax = adjustments(locale.pretax_adjustment_fields_pattern)
+    posttax = adjustments(locale.posttax_adjustment_fields_pattern)
+    before_tax = summary_amount(locale.total_before_tax, required=False)
+    expected_before_tax = reduce_amounts([subtotal] + [a.amount for a in pretax])
+    if before_tax is None:
+        before_tax = expected_before_tax
+    tax = summary_amount(locale.regular_estimated_tax, required=False)
+    if tax is None:
+        tax = Amount(ZERO, subtotal.currency)
+    total = beancount.core.amount.add(before_tax, tax)
+    errors = []  # type: Errors
+    comparisons = [
+        ('items subtotal', reduce_amounts(beancount.core.amount.mul(item.price, item.quantity)
+                                         for item in items), subtotal),
+        ('total before tax', expected_before_tax, before_tax),
+        ('grand total', reduce_amounts([total] + [a.amount for a in posttax]), grand_total),
+    ]
+    for label, expected, actual in comparisons:
+        if expected != actual:
+            errors.append('expected %s is %s, but parsed value is %s' % (label, expected, actual))
+
+    # A displayed payment method does not establish a charge amount or date.
+    payments = parse_credit_card_transactions(soup, locale=locale, require_full_date=True)
+    if payments and reduce_amounts(p.amount for p in payments) != grand_total:
+        errors.append('total payment amount is %s, but grand total is %s' %
+                      (reduce_amounts(p.amount for p in payments), grand_total))
+    shipment = Shipment(
+        shipped_date=None, items=items, items_subtotal=subtotal,
+        pretax_adjustments=pretax, total_before_tax=before_tax,
+        posttax_adjustments=[], tax=[Adjustment('Sales Tax', tax)],
+        total=total, errors=[])
+    return Order(
+        order_id=order_id, order_date=order_date, shipments=[shipment],
+        credit_card_transactions=payments, pretax_adjustments=pretax,
+        posttax_adjustments=posttax, tax=tax, errors=errors)
+
 
 WFM_RECEIPT_DIRNAME = 'wfm'
 WFM_PROMOTIONS_DESCRIPTION = 'Whole Foods promotions'
@@ -1414,326 +1513,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-def parse_new_style_invoice(soup, locale=Locale_en_US) -> Order:
-    """ Parse new style regular order invoice (div-based with data-component attributes)
-    """
-    errors = []  # type: Errors
-
-    # Order ID
-    order_id_div = soup.find(attrs={"data-component": "orderId"})
-    if order_id_div:
-        # Extract "111-0000001-0000001" from span
-        # Structure: <div ...> ... <span>111-0000001-0000001</span> ... </div>
-        # The span is deeply nested.
-        # We can just look for the text that matches the order ID pattern within this div
-        order_id_text = order_id_div.get_text(strip=True)
-        # Use regex to find the ID in the text
-        m = re.search(r'(\d{3}-\d{7}-\d{7})', order_id_text)
-        if m:
-            order_id = m.group(1)
-        else:
-             # Fallback or error
-             errors.append("Could not extract order ID from data-component='orderId'")
-             order_id = "UNKNOWN"
-    else:
-        errors.append("Could not find data-component='orderId'")
-        order_id = "UNKNOWN"
-
-    # Order Date
-    order_date_div = soup.find(attrs={"data-component": "orderDate"})
-    if order_date_div:
-        # Structure: ... <span>March 15, 2025 <i ...></i></span>
-        # Text might be "March 15, 2025 "
-        date_text = order_date_div.get_text(strip=True)
-        try:
-            order_date = locale.parse_date(date_text)
-        except Exception as e:
-            errors.append(f"Could not parse order date: {date_text} ({e})")
-            order_date = datetime.date.today() # Fallback
-    else:
-        errors.append("Could not find data-component='orderDate'")
-        order_date = datetime.date.today()
-
-    # Items
-    items = []
-    # Items are in data-component="purchasedItems" -> "purchasedItemsLeftGrid" -> "itemTitle", "itemImage", "quantity", "unitPrice", "orderedMerchant"
-    # But the structure is nested. We can iterate over "purchasedItems" container.
-    # Actually, looking at the HTML, "purchasedItems" contains the list.
-    # Inside, it seems to be a list of items.
-    # Let's try to find all "itemTitle" components, and for each, find the corresponding other components.
-    # However, they might be in separate grids.
-    # The HTML structure showed "purchasedItemsLeftGrid" containing "itemImage" and "quantity" (sometimes?),
-    # and "purchasedItemsRightGrid" containing "itemTitle", "orderedMerchant", "unitPrice".
-    # This suggests we need to iterate over rows or containers that group these.
-    # In the provided HTML, "purchasedItems" seems to wrap the whole list?
-    # Let's look at the structure again.
-    # <div data-component="purchasedItems">
-    #   <div data-component="purchasedItemsLeftGrid"> ... itemImage ... </div>
-    #   <div data-component="purchasedItemsRightGrid"> ... itemTitle ... unitPrice ... orderedMerchant ... </div>
-    # </div>
-    # It seems there is one "purchasedItems" container per item? Or one big container?
-    # The grep showed only one "purchasedItems" (line 2462).
-    # But multiple "itemTitle" (line 2655).
-    # Wait, grep showed:
-    # {"File":... "LineNumber":2462, "LineContent":"  <div class=\"\" data-component=\"purchasedItems\">"}
-    # {"File":... "LineNumber":2655, "LineContent":"  <div class=\"\" data-component=\"itemTitle\">"}
-    # {"File":... "LineNumber":3139, "LineContent":"  <div class=\"\" data-component=\"unitPrice\">"}
-    #
-    # If there are multiple items, there should be multiple "itemTitle"s.
-    # In the example HTML, there is only 1 item (quantity 2).
-    # So we might need to find all containers that represent an item.
-    # Usually, these are grouped.
-    # Let's assume we can find all `data-component="itemTitle"` and traverse up/around to find others,
-    # OR find a common parent for each item.
-    #
-    # Let's try to find all elements with `data-component="purchasedItemsLeftGrid"` (assuming one per item).
-    # Or `data-component="purchasedItemsRightGrid"`.
-    
-    item_containers = soup.find_all(attrs={"data-component": "purchasedItemsRightGrid"})
-    # We also need the left grid for quantity (maybe?)
-    # In the example, quantity was in "quantity" component (line 3078), which was inside... where?
-    # The view_file for quantity showed it near unitPrice? No, line 3078. Unit price 3139.
-    # They seem to be in the same container or close.
-    
-    for item_container in item_containers:
-        # Title
-        title_div = item_container.find(attrs={"data-component": "itemTitle"})
-        description = title_div.get_text(strip=True) if title_div else "Unknown Item"
-        
-        # Merchant
-        merchant_div = item_container.find(attrs={"data-component": "orderedMerchant"})
-        sold_by = merchant_div.get_text(strip=True).replace("Sold by:", "").strip() if merchant_div else None
-        
-        # Price
-        price_div = item_container.find(attrs={"data-component": "unitPrice"})
-        price_text = price_div.get_text(strip=True) if price_div else None
-        # price_text might be "$10.25$10.25" (offscreen + visible)
-        # We need to extract one valid price.
-        if price_text:
-             # Look for the first occurrence of a price pattern
-             m_price = re.search(r'[\d.,]+', price_text)
-             # This is risky if it catches garbage.
-             # Better: find the span with aria-hidden="true" or class="a-offscreen"
-             price_span = price_div.find(class_="a-offscreen")
-             if price_span:
-                 price_text = price_span.get_text(strip=True)
-             else:
-                 # Fallback
-                 pass
-             price = locale.parse_amount(price_text)
-        else:
-            price = Amount(D(0), locale.currency)
-
-        # Quantity
-        # In the HTML view:
-        # <div ... data-component="quantity">
-        #   <span ...>Qty:</span> <span>2</span>
-        # </div>
-        qty_div = item_container.find(attrs={"data-component": "quantity"})
-        quantity = None
-        if qty_div:
-             qty_text = qty_div.get_text(strip=True)
-             m_qty = re.search(r'Qty:\s*(\d+)', qty_text, re.IGNORECASE)
-             if m_qty:
-                 quantity = D(m_qty.group(1))
-             else:
-                 try:
-                     q = D(qty_text)
-                     if q > 0: quantity = q
-                 except:
-                     pass
-        
-        if quantity is None:
-            # Try to find it in the sibling left grid
-            # item_container is purchasedItemsRightGrid
-            # parent should be the wrapper
-            parent = item_container.parent
-            if parent:
-                left_grid = parent.find(attrs={"data-component": "purchasedItemsLeftGrid"})
-                if left_grid:
-                    # Look for od-item-view-qty
-                    qty_view = left_grid.find(class_="od-item-view-qty")
-                    if qty_view:
-                        qty_text = qty_view.get_text(strip=True)
-                        try:
-                            quantity = D(qty_text)
-                        except:
-                            pass
-        
-        if quantity is None:
-            quantity = D(1)
-
-        items.append(Item(
-            quantity=quantity,
-            description=description,
-            sold_by=sold_by,
-            condition=None, # Not easily found yet
-            price=price
-        ))
-
-    # Totals from Order Summary
-    order_summary_div = soup.find(attrs={"data-component": "orderSummary"})
-    
-    # Subtotal
-    # We can try to find "Item(s) Subtotal:" and the value next to it.
-    # The structure is messy divs.
-    # We can iterate all text nodes or look for specific labels.
-    
-    def get_summary_value(label_pattern):
-        if not order_summary_div: return None
-        # Find element containing the label, case insensitive
-        label_el = order_summary_div.find(string=re.compile(label_pattern, re.IGNORECASE))
-        if label_el:
-            # The value is usually in a corresponding column.
-            # In the HTML:
-            # <div ... label ...> ... </div>
-            # <div ... content ...> ... $20.50 ... </div>
-            # They are in "od-line-item-row-label" and "od-line-item-row-content"
-            # We can traverse up to "od-line-item-row" and find the content div.
-            row = label_el.find_parent(class_="od-line-item-row")
-            if row:
-                content_div = row.find(class_="od-line-item-row-content")
-                if content_div:
-                    return content_div.get_text(strip=True)
-        return None
-
-    items_subtotal_text = get_summary_value(locale.items_subtotal)
-    items_subtotal = locale.parse_amount(items_subtotal_text) if items_subtotal_text else None
-
-    # Adjustments (Shipping, Promotion, etc.)
-    # We iterate over the patterns defined in the locale
-    
-    # Pretax Adjustments
-    pretax_adjustments = []
-    
-    # Helper to find adjustments based on regex pattern
-    def find_adjustments(pattern_str):
-        adjustments = []
-        if not order_summary_div: return adjustments
-        # The pattern might be complex (joined by |), so we search for text matching it
-        # We can iterate over all rows in the summary
-        rows = order_summary_div.find_all(class_="od-line-item-row")
-        for row in rows:
-            label_div = row.find(class_="od-line-item-row-label")
-            if not label_div: continue
-            label_text = label_div.get_text(strip=True)
-            
-            # Check if label matches the pattern
-            # The pattern in locale is often like "(?:Shipping|Promotion ...):"
-            # We need to be careful with the trailing colon which might or might not be in the text
-            # The locale patterns usually include the colon.
-            
-            if re.match(pattern_str, label_text, re.IGNORECASE):
-                content_div = row.find(class_="od-line-item-row-content")
-                if content_div:
-                    amount_text = content_div.get_text(strip=True)
-                    amount = locale.parse_amount(amount_text)
-                    if amount:
-                        # Clean label (remove colon)
-                        clean_label = label_text.rstrip(':').strip()
-                        adjustments.append(Adjustment(description=clean_label, amount=amount))
-        return adjustments
-
-    pretax_adjustments.extend(find_adjustments(locale.pretax_adjustment_fields_pattern))
-
-    # Total before tax
-    total_before_tax_text = get_summary_value(locale.total_before_tax)
-    total_before_tax = locale.parse_amount(total_before_tax_text) if total_before_tax_text else None
-
-    # Tax (and other posttax adjustments)
-    # Tax is usually separate but might be in posttax patterns for some locales?
-    # In en_US, tax is separate.
-    
-    tax_text = get_summary_value(locale.regular_estimated_tax)
-    tax_amount = locale.parse_amount(tax_text) if tax_text else Amount(D(0), locale.currency)
-    tax = [Adjustment(description="Estimated tax to be collected", amount=tax_amount)] if tax_amount and tax_amount.number != ZERO else []
-    
-    # Posttax Adjustments
-    posttax_adjustments = find_adjustments(locale.posttax_adjustment_fields_pattern)
-
-    # Grand Total
-    grand_total_text = get_summary_value(locale.regular_total_order)
-    total = locale.parse_amount(grand_total_text) if grand_total_text else None
-
-    # Payment / Credit Card
-    # "payment_information" component?
-    # <div data-component="payment_information"> ... </div> ?
-    # In HTML: <div data-component="viewPaymentPlanSummaryWidget"> ?
-    # Or just "Grand Total" section implies payment?
-    # The example has "Prime Visa ending in 0000".
-    # We can look for "paymentMethod" or similar.
-    # In the HTML, line 1592: <span ... class="pmts-payments-instrument-detail-box-paystationpaymentmethod ...">Prime Visa ... ending in 0000</span>
-    # This is inside data-component="orderSummary" -> "shippingAddress" (weirdly?) or just before it.
-    # Actually, it's in a separate box often.
-    # Let's look for "Credit Card transactions" or similar text if present.
-    # In the new format, it might be different.
-    # The example JSON has "Prime Visa" and "0000".
-    # Let's try to find the payment instrument.
-    # We can search for "ending in" pattern.
-    
-    credit_card_transactions = []
-    # Try to find payment info text by looking for "ending in" pattern
-    # This is more robust than looking for specific classes which might change
-    ending_in_nodes = soup.find_all(string=re.compile(r"ending in \d+"))
-    for node in ending_in_nodes:
-        # node is the text element, e.g. "ending in 0000"
-        # We want the surrounding context to get the card name
-        # Traverse up to a block element or reasonable container
-        container = node.parent
-        # Go up a few levels to find the full description line, but stop at div/table
-        # In the example: <span>Prime Visa... <span>ending in...</span></span>
-        # So going up to the parent span/div should be enough.
-        # We'll try to get text from the parent, and if it doesn't have the card name, go up one more.
-        
-        # Limit recursion to avoid grabbing too much text
-        for _ in range(3):
-            if container is None: break
-            text = container.get_text(" ", strip=True)
-            m = re.search(r'(.*) ending in (\d+)', text)
-            if m:
-                card_desc = m.group(1).strip()
-                # Clean up description (remove "Earns 5%..." if it got included, though usually that's a sibling)
-                # In the example: "Prime Visa ending in 0000" is clean.
-                # But sometimes it might capture more.
-                # "Prime Visa ending in 0000 Earns 5%..."
-                # The regex (.*) is greedy.
-                # We might want to restrict it or clean it.
-                # For now, assume it's reasonably short or the container is specific enough.
-                
-                last_digits = m.group(2)
-                
-                # Check for duplicates
-                if not any(c.card_ending_in == last_digits for c in credit_card_transactions):
-                    credit_card_transactions.append(CreditCardTransaction(
-                        date=order_date,
-                        card_description=card_desc,
-                        card_ending_in=last_digits,
-                        amount=total if total else Amount(D(0), locale.currency)
-                    ))
-                break # Found valid match for this node
-            container = container.parent
-
-    # Construct Shipment
-    shipment = Shipment(
-        shipped_date=None, # Not easily found in this view, often null for new orders
-        items=items,
-        items_subtotal=items_subtotal,
-        pretax_adjustments=pretax_adjustments,
-        total_before_tax=total_before_tax,
-        posttax_adjustments=[],
-        tax=tax,
-        total=total,
-        errors=errors
-    )
-
-    return Order(
-        order_id=order_id,
-        order_date=order_date,
-        shipments=[shipment],
-        credit_card_transactions=credit_card_transactions,
-        pretax_adjustments=pretax_adjustments,
-        tax=tax_amount,
-        posttax_adjustments=posttax_adjustments,
-        errors=errors
-    )
