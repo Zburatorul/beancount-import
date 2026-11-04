@@ -361,7 +361,7 @@ class PaypalJsonSource(LinkBasedSource, Source):
 
         # Booking amount defaults to merchant amount
         booking_amount = merchant_amount
-        booking_currency = merchant_currency
+        booking_currency: Optional[str] = merchant_currency
 
         # If we have a USD funding source and merchant is non-USD, book USD
         foreign_note = None
@@ -400,7 +400,7 @@ class PaypalJsonSource(LinkBasedSource, Source):
             narration += f' ({foreign_note})'
 
         # ── Build transaction ──────────────────────────────────────────────
-        txn_meta = collections.OrderedDict()
+        txn_meta: Dict[str, Any] = collections.OrderedDict()
         transaction = Transaction(
             meta=txn_meta,
             date=date,
