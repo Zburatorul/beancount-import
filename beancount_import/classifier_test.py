@@ -1,4 +1,5 @@
 import datetime
+import pytest
 
 from beancount.core.amount import Amount
 from beancount.core.number import D
@@ -297,3 +298,19 @@ def test_predictions_carry_confidence():
     # Nothing to go on: no prediction, no confidence.
     assert other_confidence is None
 
+
+
+@pytest.mark.parametrize('use_nearest_neighbor', [False, True])
+def test_tentative_predictions_survive_classifier_selection(use_nearest_neighbor):
+    loaded = _bare_reconciler([])
+    loaded._use_nearest_neighbor = use_nearest_neighbor
+    transaction, = test_util.parse("""
+        2020-02-01 * "Synthetic tentative prediction"
+          Assets:Checking  -10.00 USD
+          Expenses:Groceries  10.00 USD
+            unconfirmed_account: TRUE
+            new_account: TRUE
+    """)
+    assert loaded._predict_unknown_accounts(transaction) == [
+        ('Expenses:Groceries', None)
+    ]

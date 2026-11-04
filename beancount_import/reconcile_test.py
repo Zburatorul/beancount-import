@@ -244,6 +244,11 @@ def test_basic(tmpdir: py.path.local):
         ),
     )
 
+    assert not tester.loaded_reconciler._use_nearest_neighbor
+    assert tester.next_candidates is not None
+    assert all(sub.prediction_confidence is None
+               for candidate in tester.next_candidates.candidates
+               for sub in candidate.substituted_accounts or [])
     tester.accept_candidate(0)
     tester.snapshot()
     tester.change_candidate(0, dict(accounts=['Expenses:Coffee'], ))
@@ -455,7 +460,8 @@ def test_stage_missing_accounts_with_unspecified_currency(tmpdir, missing_curren
     assert stage.get_missing_accounts() == []
 
 
-def test_without_classifier(tmpdir: py.path.local):
+@pytest.mark.parametrize('classifier', reconcile.CLASSIFIERS)
+def test_without_classifier(tmpdir: py.path.local, classifier: str):
     # build_classifier=False (rules-only imports) skips the classifier; the
     # basic flow still works, with no account predictions.
     tester = ReconcileGoldenTester(
@@ -463,6 +469,7 @@ def test_without_classifier(tmpdir: py.path.local):
         temp_dir=str(tmpdir),
         options=dict(
             build_classifier=False,
+            classifier=classifier,
             data_sources=[{
                 'module': 'beancount_import.source.mint',
                 'filename': mint_data_path,
@@ -470,6 +477,8 @@ def test_without_classifier(tmpdir: py.path.local):
         ),
     )
     assert tester.loaded_reconciler.classifier is None
+    assert tester.loaded_reconciler.training_examples.training_examples == []
+    assert tester.loaded_reconciler.retrain() is tester.loaded_reconciler
     num_pending = tester.loaded_reconciler.num_pending
     tester.accept_candidate(0)
     assert tester.loaded_reconciler.num_pending < num_pending
